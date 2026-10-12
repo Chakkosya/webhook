@@ -34,7 +34,7 @@ GitHub 仓库公开与 GHCR 镜像包公开是两项独立设置。镜像包仍�
 
 ## 在 1Panel 中更新镜像
 
-镜像地址固定为 `ghcr.io/godluo666/webhook:latest`。`main` 分支每次构建成功都会更新这个标签。1Panel 要从 GHCR 拉取，镜像包必须允许服务器访问：到 GitHub 账户的 **Packages → webhook → Package settings → Change visibility**，设为 **Public**。仅将代码仓库设为公开不会改变镜像包的可见性。公开后先在服务器验证：
+镜像地址固定为 `ghcr.io/godluo666/webhook:latest`。`main` 或 `fix/order-workflow-compatibility` 分支通过全部构建与容器验证后会更新这个标签。1Panel 要从 GHCR 拉取，镜像包必须允许服务器访问：到 GitHub 账户的 **Packages → webhook → Package settings → Change visibility**，设为 **Public**。仅将代码仓库设为公开不会改变镜像包的可见性。公开后先在服务器验证：
 
 ```bash
 docker pull ghcr.io/godluo666/webhook:latest
@@ -44,7 +44,11 @@ docker pull ghcr.io/godluo666/webhook:latest
 
 ## 自动下单验证
 
-生成阶段遇到认证失败时，任务保持 `needs_validation`，不会启用或提交订单；恢复认证后需重新验证。AI 仅返回缺货且没有可用 SOP 时，保留准备线索并进入 `waiting_stock`，不重复请求同一份 AI 计划；已有或同时返回的 SOP 仍可探索可访问阶段。缺货不跳过两次试跑和审批，其他可修复的生成或试跑错误仍按有界次数恢复。
+通用流程为恢复登录 → 识别商品 → 配置规格和数量 → 核验购物车 → 应用并核验可选优惠 → 核对含税总价、币种与付款意图 → 提交一次 → 核实订单结果，授权付款时再核对原账单并付款。站点可以合并或省略页面，但核验步骤由程序执行。已学页面优先复用；首次适配、绑定失效或存在歧义时才局部请求 AI。一次完整试跑停在最终提交前，正式执行重新核对当前订单；未知交易结果不重试。
+
+每次准备试跑或执行开启新一轮日志，查看、复制和下载只包含最新一轮；日志及界面步骤时间固定为北京时间（Asia/Shanghai，UTC+8）。
+
+生成阶段遇到认证失败时，任务保持 `needs_validation`，不会启用或提交订单；恢复认证后需重新验证。AI 仅返回缺货且没有可用 SOP 时，保留准备线索并进入 `waiting_stock`，不重复请求同一份 AI 计划；已有或同时返回的 SOP 仍可探索可访问阶段。缺货不跳过一次试跑和审批，其他可修复的生成或试跑错误仍按有界次数恢复。
 
 ## 启动
 
@@ -69,9 +73,9 @@ node server.js
 | `RESEND_API_KEY` | 邮箱验证码发信服务的 API Key |
 | `MAIL_FROM` | 发件地址，须属于已在 Resend 验证的域名 |
 | `HTTP_PROXY` / `HTTPS_PROXY` | Node.js 24.14+ 会自动使用代理，并跳过本地地址；较旧版本请通过运行环境配置网络 |
-| `ORDER_AI_TIMEOUT_MS` | 单次下单 AI 请求等待时间，默认 120000（2 分钟），超时最多重试 1 次 |
+| `ORDER_AI_TIMEOUT_MS` | 单次下单 AI 请求等待时间，默认 120000（2 分钟），默认不自动重试，超时后可手动重试 |
 | `ORDER_AGENT_TIMEOUT_MS` | 每轮动态探索预算，默认 600000（10 分钟） |
-| `ORDER_TRIAL_TIMEOUT_MS` | 生成 SOP 与两次试跑的总预算，默认 1500000（25 分钟） |
+| `ORDER_TRIAL_TIMEOUT_MS` | 生成 SOP 与一次试跑的总预算，默认 1500000（25 分钟） |
 | `MONITOR_BROWSER_EXECUTABLE` | 直接运行 Node 时指定 Chrome / Chromium 可执行文件，Docker 已内置 |
 | `MONITOR_BROWSER_ENABLED=0` | 关闭浏览器读取，默认启用 |
 | `MONITOR_TEMP_DIR` | 可选私有临时目录；新版 Docker 的浏览器和代理临时文件使用 /tmp，Compose 挂载有容量上限的 tmpfs |

@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { executeOrderScript } from '../lib/order-script.js';
 import { parseOrderTotal } from '../lib/order-browser.js';
+import {nativeRequestContract} from '../lib/order-contract.js';
+import {BUSINESS_PROMPT} from '../automation/agent/planner.js';
+import {agentError} from '../automation/agent/model.js';
 import { createOrderService, validateOrderTask, validateOrderProgram, orderProgramHash, publicOrderTask } from '../lib/orders.js';
 
 const input = {label:'购买产品 A',url:'https://shop.example/product/a',product:'Product A',quantity:1,maxTotal:15,currency:'USD',executionMode:'submit',monitorId:'monitor-a'};
@@ -25,28 +28,53 @@ test('下单配置拒绝无限预算、无效数量、带凭据的 URL；付款�
   assert.equal(task.enabled,false);assert.equal(JSON.stringify(publicOrderTask(task)).includes('private-site-secret'),false);
   assert.deepEqual(validateOrderTask({...input,url:'https://another-shop.example/a'},task).credentials,{});
 });
-function fixture({uncertain=false,fake=false,pay=false,paymentFailure=false,paymentUnknown=false,insufficientBalance=false,paymentStructure=false,assistanceCode=null,trialAuthError=null,generatedProgram=null,accountState=null,persistError=null}={}){
-  const task=validateOrderTask({...input,executionMode:pay?'pay':input.executionMode}),user={id:'user-a',orderAccounts:[{monitorId:'monitor-a',loginUrl:input.url,revision:1,status:'saved',session:{state:{cookies:[],origins:[]},check:{url:input.url}}}],monitors:[{id:'monitor-a',kind:'webpage'}],orderTasks:[task]};let generated=0,commits=0,writes=0,payments=0,loginError=null,missingPayment=paymentStructure,opened=0;
-  const service=createOrderService({persist:()=>{if(persistError?.(user))throw new Error('会话写入失败');writes++;},requestAI:async(_user,messages)=>{generated++;assert.ok(messages[1].content.includes('actual-random-selector'));if(generatedProgram)return generatedProgram;if(JSON.parse(messages[1].content).phase==='payment')return {summary:'从原订单账单真实 DOM 恢复付款定位',paymentCode:assistanceCode||'function(){return {checks:{}};}'};return pay?{...program,code:'function(order,browser){browser.goto(order.url);const receipt=browser.submit();if(receipt.status==="prepared")return receipt;return browser.pay({});}'}:program;},runScript:executeOrderScript,
-    openBrowser:async(current,options)=>{if(loginError)throw loginError;if(trialAuthError&&++opened===2)throw trialAuthError;const session={trace:[],receipt:null,snapshot:async()=>({text:'Product A USD 10',elements:[{id:'actual-random-selector'}]}),close:async()=>{},methods:{goto:async()=>true,submit:async()=>{
-      if(current.dryRun||current.executionMode==='prepare'){session.trace.push({action:'核对'});session.receipt={status:'prepared',review:{product:current.product,quantity:1,total:10,currency:'USD'}};return session.receipt;}
-      await options.onBeforeSubmit({product:current.product,quantity:1,total:10,currency:'USD'});commits++;session.trace.push({action:'提交'});
-      if(uncertain)throw new Error('receipt timed out');
-      if(fake&&!pay)return {status:'ordered'};
-      session.receipt={status:'ordered',review:{product:current.product,quantity:1,total:10,currency:'USD'},confirmation:'Order #42'};return session.receipt;
-    },pay:async()=>{
-      if(missingPayment){missingPayment=false;throw new Error('Missing payment field: original-invoice-pay');}
-      if(insufficientBalance){session.receipt={...session.receipt,status:'awaiting_payment',invoiceId:'42',url:'https://shop.example/invoice?id=42',paymentPending:{reason:'insufficient_balance',message:'余额不足，已保留待付款订单',balance:0,total:10,currency:'USD'}};return session.receipt;}
-      if(paymentFailure)throw new Error('invoice price changed');
-      assert.ok(task.submissionStartedAt, 'Submission ledger must be durable before payment');
-      await options.onBeforePayment({invoiceId:'42',total:10,currency:'USD'});
-      assert.ok(task.paymentStartedAt, 'Payment ledger must be durable before charge');payments++;
-      if(paymentUnknown)throw new Error('payment confirmation timed out');
-      if(fake)return {status:'paid'};
-      session.receipt={...session.receipt,status:'paid',invoiceId:'42',payment:{total:10,currency:'USD'}};return session.receipt;
-    }},accountState};return session;}});
-  return {service,task,user,setLoginError(error){loginError=error;},get generated(){return generated},get commits(){return commits},get payments(){return payments},get writes(){return writes}};
+const business={summary:'核对当前购买要求',workflow:{version:2,requirements:[]}};
+const semanticTarget=(meaning,index)=>({meaning,ref:'e'+index,confidence:0.95});
+const reviewStep=()=>({action:'review',reason:'Check the observed order',bindings:Object.fromEntries(['submit','product','quantity','total','currency'].map((key,i)=>[key,semanticTarget(key,i)]))});
+function fixture({uncertain=false,fake=false,pay=false,paymentFailure=false,paymentUnknown=false,insufficientBalance=false,paymentStructure=false,assistanceCode=null,trialAuthError=null,generatedProgram=null,stock=false,structureFailure=null,quantity='1',accountState=null,persistError=null}={}){
+  const task=validateOrderTask({...input,...(generatedProgram?{instruction:'核对当前购买要求'}:{}),executionMode:pay?'pay':input.executionMode}),user={id:'user-a',orderAccounts:[{monitorId:'monitor-a',loginUrl:input.url,revision:1,status:'saved',session:{state:{cookies:[],origins:[]},check:{url:input.url}}}],monitors:[{id:'monitor-a',kind:'webpage'}],orderTasks:[task]};
+  let generated=0,commits=0,writes=0,payments=0,loginError=null,missingPayment=paymentStructure,opened=0,failOnce=true,filled=0;
+  const service=createOrderService({persist:()=>{if(persistError?.(user))throw new Error('会话写入失败');writes++;},requestAI:async(_user,messages)=>{
+    generated++;if(messages[0].content===BUSINESS_PROMPT)return generatedProgram||business;
+    const content=messages[1].content,request=JSON.parse(Array.isArray(content)?content[0].text:content);
+    assert.ok(request.page.elements.some(el=>el.id==='actual-random-selector'));
+    if(stock)return {action:'stop',reason:'Product A is out of stock'};
+    if(request.context.submissionStarted){
+      if(assistanceCode&&!missingPayment)return reviewStep();
+      return {action:'pay',reason:'Pay the original observed invoice',bindings:{pay:semanticTarget('pay',5),invoice:semanticTarget('invoice',6),total:semanticTarget('total',3),currency:semanticTarget('currency',4)}};
+    }
+    if(quantity!=='1')return {steps:[{action:'fill',reason:'Correct current cart quantity',target:semanticTarget('quantity',2),valueFrom:'quantity'},reviewStep()]};
+    return reviewStep();
+  },runScript:executeOrderScript,openBrowser:async(current,options)=>{
+    opened++;if(loginError)throw loginError;if(trialAuthError)throw trialAuthError;
+    const page=()=>({url:current.url,text:'Product A USD 10',elements:[{ref:'e0',tag:'button',role:'button',text:'Place order',id:'actual-random-selector'},{ref:'e1',tag:'h1',text:'Product A'},{ref:'e2',tag:'input',role:'spinbutton',name:'quantity',value:quantity},{ref:'e3',tag:'span',text:'USD 10'},{ref:'e4',tag:'span',text:'USD'},{ref:'e5',tag:'button',role:'button',text:'Pay invoice'},{ref:'e6',tag:'input',type:'hidden',name:'invoice',value:'42',formRef:'e7'}]});
+    const contract=nativeRequestContract({nativeSubmit:true,url:current.url,method:'POST',encoding:'application/x-www-form-urlencoded',entries:[['quantity','1']]});
+    const session={dryRun:!!current.dryRun,submissionStarted:false,paymentStarted:false,trace:[],receipt:null,snapshot:async()=>page(),close:async()=>{},accountState,methods:{
+      observe:async()=>page(),resolveSemantic:async target=>({selector:target.ref,strategy:'ref'}),readSemantic:async target=>page().elements.find(el=>el.ref===target.ref),
+      fill:async(_key,value)=>{quantity=String(value);filled++;},submit:async()=>{
+        assert.equal(quantity,'1');
+        if(current.dryRun){session.trace.push({action:'核对'});session.receipt={status:'prepared',review:{product:current.product,quantity:1,total:10,currency:'USD'},requestContract:contract};return session.receipt;}
+        if(structureFailure==='before'&&failOnce){failOnce=false;throw agentError('AGENT_ELEMENT_MISSING','网页元素不存在：old-submit');}
+        await options.onBeforeSubmit({product:current.product,quantity:1,total:10,currency:'USD'});session.submissionStarted=true;commits++;session.trace.push({action:'提交'});
+        if(uncertain||structureFailure==='after')throw new Error('receipt timed out');
+        if(fake&&!pay)return {status:'ordered'};
+        session.receipt={status:'ordered',review:{product:current.product,quantity:1,total:10,currency:'USD'},confirmation:'Order #42'};return session.receipt;
+      },pay:async()=>{
+        if(missingPayment){missingPayment=false;throw agentError('AGENT_ELEMENT_MISSING','Missing payment field: original-invoice-pay');}
+        if(insufficientBalance){session.receipt={...session.receipt,status:'awaiting_payment',invoiceId:'42',url:'https://shop.example/invoice?id=42',paymentPending:{reason:'insufficient_balance',message:'余额不足，已保留待付款订单',balance:0,total:10,currency:'USD'}};return session.receipt;}
+        if(paymentFailure)throw new Error('invoice price changed');
+        assert.ok(task.submissionStartedAt,'Submission ledger must be durable before payment');
+        await options.onBeforePayment({invoiceId:'42',total:10,currency:'USD'});session.paymentStarted=true;
+        assert.ok(task.paymentStartedAt,'Payment ledger must be durable before charge');payments++;
+        if(paymentUnknown)throw new Error('payment confirmation timed out');
+        if(fake)return {status:'paid'};
+        session.receipt={...session.receipt,status:'paid',invoiceId:'42',payment:{total:10,currency:'USD'}};return session.receipt;
+      }
+    }};return session;
+  }});
+  return {service,task,user,setLoginError(error){loginError=error;},get generated(){return generated;},get commits(){return commits;},get payments(){return payments;},get writes(){return writes;},get opened(){return opened;},get filled(){return filled;}};
 }
+
 test('下单试跑刷新会话落盘失败时保留原状态，不让后续日志固化失败更新',async()=>{
  let fail=true;const fresh={state:{cookies:[{name:'auth',value:'rotated'}],origins:[]},sessionStorage:{token:'fresh'}};
  const f=fixture({accountState:async()=>fresh,persistError:user=>fail&&user.orderAccounts[0].session.state===fresh.state});
@@ -70,7 +98,7 @@ test('监控触发只提交一次，失败、结果未知和重启后都不会�
 });
 test('伪造成功返回值不能替代执行器确认的订单凭据',async()=>{
   const f=fixture({fake:true});await f.service.generate(f.user,f.task);f.service.approve(f.user,f.task,orderProgramHash(f.task));await f.service.execute(f.user,f.task);
-  assert.equal(f.task.status,'uncertain');assert.match(f.task.error,/可验证/);
+  assert.equal(f.task.status,'uncertain');assert.match(f.task.error,/可验证|宿主核验/);
 });
 
 test('付款记录先于扣款保存；成功、付款中断和未开始付款都不会再次执行',async()=>{
@@ -96,17 +124,12 @@ test('缺少提前登录、账户变更和 AFF 变更不能沿用原下单授权
   const h=fixture();await h.service.generate(h.user,h.task);h.service.approve(h.user,h.task,orderProgramHash(h.task));h.task.affiliateUrl='https://shop.example/aff?aff=12';await assert.rejects(h.service.execute(h.user,h.task),/配置已变更/);assert.equal(h.commits,0);
   assert.throws(()=>validateOrderTask({...input,affiliateUrl:'javascript:alert(1)'}));assert.throws(()=>validateOrderTask({...input,affiliateUrl:'https://u:p@shop.example/aff'}));
 });
-test('下单前页面变化由 AI 修复并试跑，提交后的结构错误不重试',async()=>{
-  for(const afterSubmit of[false,true]){
-    const task=validateOrderTask(input),user={id:'a',orderTasks:[task],monitors:[{id:'monitor-a',kind:'webpage'}],orderAccounts:[{monitorId:'monitor-a',loginUrl:input.url,revision:1,status:'saved',session:{state:{cookies:[],origins:[]},check:{url:input.url}}}]};let generated=0,commits=0,failOnce=true;
-    const service=createOrderService({persist:()=>{},requestAI:async()=>{generated++;return {...program,workflow:{version:1,prepareCode:'function(){return {ready:true};}'}};},openBrowser:async(current,options)=>{const session={receipt:null,trace:[],close:async()=>{},snapshot:async()=>({text:'actual changed DOM',elements:[{id:'new-submit'}]}),methods:{submit:async()=>{
-      if(current.dryRun){session.receipt={status:'prepared'};return session.receipt;}
-      if(afterSubmit){await options.onBeforeSubmit({total:10});commits++;throw new Error('网页元素不存在：#receipt');}
-      if(failOnce){failOnce=false;throw new Error('网页元素不存在：#old-submit');}
-      await options.onBeforeSubmit({total:10});commits++;session.receipt={status:'ordered'};return session.receipt;
-    }}};return session;}});
-    await service.generate(user,task);service.approve(user,task,orderProgramHash(task));await service.trigger(user,user.monitors[0]);await service.trigger(user,user.monitors[0]);
-    assert.equal(commits,1);assert.equal(generated,afterSubmit?1:2);assert.equal(task.repairs.length,afterSubmit?0:1);assert.equal(task.status,afterSubmit?'uncertain':'ordered');
+test('下单前页面变化在同一浏览器局部修复，提交后的结构错误不重试',async()=>{
+  for(const afterSubmit of [false,true]){
+    const f=fixture({structureFailure:afterSubmit?'after':'before'});
+    await f.service.generate(f.user,f.task);f.service.approve(f.user,f.task,orderProgramHash(f.task));
+    await f.service.trigger(f.user,f.user.monitors[0]);await f.service.trigger(f.user,f.user.monitors[0]);
+    assert.equal(f.commits,1);assert.equal(f.generated,afterSubmit?1:2);assert.equal(f.opened,2);assert.equal(f.task.repairs.length,0);assert.equal(f.task.status,afterSubmit?'uncertain':'ordered');
   }
 });
 
@@ -136,48 +159,44 @@ test('登录暂时无法验证不删除会话或调用 AI 修复，恢复后继�
 
 test('订单创建后的 DOM 变化由 AI 在同一浏览器协助原账单付款，永不创建第二单',async()=>{
  const f=fixture({pay:true,paymentStructure:true});await f.service.generate(f.user,f.task);f.service.approve(f.user,f.task,orderProgramHash(f.task));
- await f.service.execute(f.user,f.task);assert.equal(f.task.status,'paid');assert.equal(f.commits,1);assert.equal(f.payments,1);assert.equal(f.generated,2);assert.equal(f.task.paymentAssistance.length,1);
+ await f.service.execute(f.user,f.task);assert.equal(f.task.status,'paid');assert.equal(f.commits,1);assert.equal(f.payments,1);assert.equal(f.generated,3);assert.ok(f.user.orderExecutionLogs[0].events.some(event=>event.action==='重新观察并修复'));
  await f.service.trigger(f.user,f.user.monitors[0]);assert.equal(f.commits,1);assert.equal(f.payments,1);
 });
 
 test('付款 AI 辅助不能提交订单或访问商品操作，付款结果不明时不调用 AI 再付款',async()=>{
  const f=fixture({pay:true,paymentStructure:true,assistanceCode:'function(order,browser){return browser.submit();}'});await f.service.generate(f.user,f.task);f.service.approve(f.user,f.task,orderProgramHash(f.task));await f.service.execute(f.user,f.task);
- assert.equal(f.task.status,'payment_failed');assert.equal(f.commits,1);assert.equal(f.payments,0);assert.equal(f.generated,2);
+ assert.equal(f.task.status,'payment_failed');assert.equal(f.commits,1);assert.equal(f.payments,0);assert.equal(f.generated,4);
  const g=fixture({pay:true,paymentUnknown:true});await g.service.generate(g.user,g.task);g.service.approve(g.user,g.task,orderProgramHash(g.task));await g.service.execute(g.user,g.task);
- assert.equal(g.task.status,'uncertain');assert.equal(g.generated,1);assert.equal(g.commits,1);assert.equal(g.payments,1);
+ assert.equal(g.task.status,'uncertain');assert.equal(g.generated,2);assert.equal(g.commits,1);assert.equal(g.payments,1);
 });
 
 
-test('连续两次试跑发现会话购物车数量累加，AI 修正后才允许启用且试跑不提交',async()=>{
- const f=fixture();let cart=0,generated=0;
- const nextProgram={workflow:{version:1,prepareCode:'function(order,browser){browser.fill("#quantity",String(order.quantity));return {ready:true};}'},checkout:program.checkout,summary:'调整已有购物车',code:'function(order,browser){browser.fill("#quantity",String(order.quantity));return browser.submit();}'};
- const service=createOrderService({persist:()=>{},requestAI:async(_user,messages)=>{generated++;if(generated===2)assert.match(messages.at(-1).content,/连续试跑/);return nextProgram;},openBrowser:async current=>{
-  const session={trace:[],snapshot:async()=>({url:current.url,elements:[]}),close:async()=>{},methods:{fill:async()=>{cart=generated===1?cart+1:1;},submit:async()=>{session.receipt={status:'prepared',review:{product:'Switch',quantity:cart,total:cart*10,currency:'USD'}};return session.receipt;}}};return session;
- }});
- await service.generate(f.user,f.task);assert.equal(generated,2);assert.equal(f.task.trial.preflightPasses,2);assert.equal(f.task.trial.review.quantity,1);assert.equal(f.task.trial.review.total,10);assert.equal(f.task.enabled,false);assert.equal(f.task.submissionStartedAt,undefined);
- service.approve(f.user,f.task,orderProgramHash(f.task));assert.equal(f.task.enabled,true);
+test('一次试跑修正现有购物车数量，不额外打开浏览器或提交订单',async()=>{
+  const f=fixture({quantity:'2'});await f.service.generate(f.user,f.task);
+  assert.equal(f.generated,1);assert.equal(f.filled,1);assert.equal(f.opened,1);assert.equal(f.task.trial.preflightPasses,1);assert.equal(f.task.trial.review.quantity,1);assert.equal(f.task.trial.review.total,10);assert.equal(f.commits,0);assert.equal(f.task.enabled,false);assert.equal(f.task.submissionStartedAt,undefined);
+  f.service.approve(f.user,f.task,orderProgramHash(f.task));assert.equal(f.task.enabled,true);
 });
 
 test('代理认证或网站 HTTP 认证失败停止试跑，不重新生成 AI 代码或删除网页登录会话',async()=>{
  for(const code of ['PROXY_AUTH_FAILED','SITE_HTTP_AUTH_REQUIRED']){
   const f=fixture({pay:true,trialAuthError:Object.assign(new Error('认证未完成'),{code})}),account=f.user.orderAccounts[0],saved=account.session;
   await assert.rejects(f.service.generate(f.user,f.task),error=>error.code===code);
-  assert.equal(f.generated,1);assert.equal(f.commits,0);assert.equal(f.payments,0);assert.equal(account.status,'saved');assert.equal(account.session,saved);assert.equal(f.task.status,'needs_validation');assert.equal(f.task.approvedHash,null);assert.equal(f.task.enabled,false);assert.equal(f.task.trial,null);
+  assert.equal(f.generated,0);assert.equal(f.commits,0);assert.equal(f.payments,0);assert.equal(account.status,'saved');assert.equal(account.session,saved);assert.equal(f.task.status,'needs_validation');assert.equal(f.task.approvedHash,null);assert.equal(f.task.enabled,false);assert.equal(f.task.trial,null);
   assert.throws(()=>f.service.approve(f.user,f.task,orderProgramHash(f.task)));await assert.rejects(f.service.execute(f.user,f.task));
   const execution=fixture({pay:true});await execution.service.generate(execution.user,execution.task);execution.service.approve(execution.user,execution.task,orderProgramHash(execution.task));const original=execution.user.orderAccounts[0].session;execution.setLoginError(Object.assign(new Error('认证未完成'),{code}));await execution.service.execute(execution.user,execution.task);
   assert.equal(execution.generated,1);assert.equal(execution.commits,0);assert.equal(execution.payments,0);assert.equal(execution.user.orderAccounts[0].status,'saved');assert.equal(execution.user.orderAccounts[0].session,original);
  }
 });
 
-test('日志保留同一次生成的两次试跑、执行结果和真实代码哈希，读取日志不重新执行',async()=>{
+test('日志保留同一次生成的一次试跑、执行结果和真实代码哈希，读取日志不重新执行',async()=>{
   const f=fixture({pay:true});await f.service.generate(f.user,f.task);
-  const generated=f.user.orderExecutionLogs[0];assert.equal(generated.kind,'generate');assert.equal(generated.status,'passed');assert.equal(generated.program.codeHash,orderProgramHash(f.task));assert.deepEqual(generated.events.filter(e=>e.action==='试跑通过').map(e=>e.pass),[1,2]);
+  const generated=f.user.orderExecutionLogs[0];assert.equal(generated.kind,'generate');assert.equal(generated.status,'passed');assert.equal(generated.program.codeHash,orderProgramHash(f.task));assert.deepEqual(generated.events.filter(e=>e.action==='试跑通过').map(e=>e.pass),[1]);
   f.service.approve(f.user,f.task,orderProgramHash(f.task));await f.service.execute(f.user,f.task);
   const executed=f.user.orderExecutionLogs[0];assert.equal(executed.kind,'execute');assert.equal(executed.status,'paid');assert.ok(executed.result.submissionStartedAt);assert.ok(executed.result.paymentStartedAt);assert.ok(executed.events.some(e=>e.action==='订单提交前记录'));assert.ok(executed.events.some(e=>e.action==='付款前记录'));assert.equal(f.commits,1);assert.equal(f.payments,1);
 });
 test('浏览器启动认证失败仍保留生成日志和错误代码，既不调用 AI 也不丢失阶段',async()=>{
   const f=fixture();f.setLoginError(Object.assign(new Error('proxy authentication failed'),{code:'PROXY_AUTH_FAILED'}));await assert.rejects(f.service.generate(f.user,f.task));
-  const log=f.user.orderExecutionLogs[0];assert.equal(log.status,'failed');assert.equal(log.result.error.code,'PROXY_AUTH_FAILED');assert.ok(log.events.some(e=>e.action==='浏览器执行失败'&&e.stage==='读取实际商品页面'&&e.error.code==='PROXY_AUTH_FAILED'));assert.equal(f.generated,0);assert.equal(f.commits,0);
+  const log=f.user.orderExecutionLogs[0];assert.equal(log.status,'failed');assert.equal(log.result.error.code,'PROXY_AUTH_FAILED');assert.ok(log.events.some(e=>e.action==='浏览器执行失败'&&e.stage==='试跑'&&e.error.code==='PROXY_AUTH_FAILED'));assert.equal(f.generated,0);assert.equal(f.commits,0);
 });
 test('优惠码选填且保持大小写，拒绝非文本、超长和多行码，修改后审批哈希失效',()=>{
  assert.equal(validateOrderTask(input).couponFailurePolicy,'stop');
@@ -190,24 +209,22 @@ test('优惠码选填且保持大小写，拒绝非文本、超长和多行码�
 });
 test('无效付款代码不再取得试跑或启用资格，未产生订单',async()=>{
  const f=fixture({pay:true,generatedProgram:{...program,workflow:{...program.workflow,paymentCode:'function(){return {checks: ;}'}}});
- await assert.rejects(f.service.generate(f.user,f.task),error=>error.code==='ORDER_SCRIPT_INVALID');assert.equal(f.task.trial,null);assert.equal(f.commits,0);assert.equal(f.payments,0);assert.throws(()=>f.service.approve(f.user,f.task,orderProgramHash(f.task)));
+ await assert.rejects(f.service.generate(f.user,f.task),error=>error.code==='ORDER_BUSINESS_PLAN_INVALID');assert.equal(f.task.trial,null);assert.equal(f.commits,0);assert.equal(f.payments,0);assert.throws(()=>f.service.approve(f.user,f.task,orderProgramHash(f.task)));
 });
-test('缺货不会反复调用 AI，保留配置且不允许启用未完成的试跑',async()=>{
- for(const generatedProgram of [{status:'out_of_stock'},{...program,workflow:{...program.workflow,prepareCode:'function(){return {status:"out_of_stock"};}'}},{...program,status:'out_of_stock',workflow:{...program.workflow,prepareCode:'function(){return {status:"out_of_stock"};}'}}]){
-  const f=fixture({generatedProgram});await assert.rejects(f.service.generate(f.user,f.task),error=>error.code==='ORDER_OUT_OF_STOCK');assert.equal(f.generated,1);assert.equal(f.task.status,'waiting_stock');assert.equal(f.task.enabled,false);assert.equal(f.commits,0);assert.equal(f.task.validation.preflight,'waiting_stock');assert.throws(()=>f.service.approve(f.user,f.task,orderProgramHash(f.task)));
- }
+test('当前页面缺货不反复调用 AI，也不允许启用未完成的试跑',async()=>{
+  const f=fixture({stock:true});await assert.rejects(f.service.generate(f.user,f.task),{code:'ORDER_OUT_OF_STOCK'});
+  assert.equal(f.generated,1);assert.equal(f.task.status,'waiting_stock');assert.equal(f.task.enabled,false);assert.equal(f.commits,0);assert.equal(f.task.validation.preflight,'waiting_stock');assert.throws(()=>f.service.approve(f.user,f.task,orderProgramHash(f.task)));
 });
-test('缺货响应保留准备线索，并复用已有完整 SOP 而非重复请求 AI',async()=>{
- const fresh=fixture({generatedProgram:{status:'out_of_stock'}});
- await assert.rejects(fresh.service.generate(fresh.user,fresh.task),error=>error.code==='ORDER_OUT_OF_STOCK');
- assert.deepEqual(fresh.task.preparation.pending,['configuration','checkout','request_contract','two_preflights']);assert.equal(fresh.task.failure.category,'waiting_stock');assert.equal(fresh.generated,1);
- const f=fixture({generatedProgram:{status:'out_of_stock'}});
- f.task.program=validateOrderProgram({...program,workflow:{...program.workflow,prepareCode:'function(){return {status:"out_of_stock"};}'}});
- const checkout=f.task.program.checkout;
- await assert.rejects(f.service.generate(f.user,f.task),error=>error.code==='ORDER_OUT_OF_STOCK');
- assert.equal(f.generated,1);assert.deepEqual(f.task.program.checkout,checkout);assert.equal(f.task.validation.syntax,'passed');assert.equal(f.task.status,'waiting_stock');assert.equal(f.task.enabled,false);assert.equal(f.commits,0);assert.equal(f.task.trial,null);
- assert.throws(()=>f.service.approve(f.user,f.task,orderProgramHash(f.task)));await assert.rejects(f.service.execute(f.user,f.task));
+
+test('缺货响应保留准备线索，再次准备复用业务 SOP',async()=>{
+  const f=fixture({stock:true});await assert.rejects(f.service.generate(f.user,f.task),{code:'ORDER_OUT_OF_STOCK'});
+  assert.deepEqual(f.task.preparation.pending,['checkout','request_contract','preflight']);assert.equal(f.task.failure.category,'waiting_stock');assert.equal(f.generated,1);
+  const workflow=structuredClone(f.task.program.workflow);
+  await assert.rejects(f.service.generate(f.user,f.task),{code:'ORDER_OUT_OF_STOCK'});
+  assert.equal(f.generated,2);assert.deepEqual(f.task.program.workflow,workflow);assert.equal(f.task.validation.syntax,'passed');assert.equal(f.task.status,'waiting_stock');assert.equal(f.task.enabled,false);assert.equal(f.commits,0);assert.equal(f.task.trial,null);
+  assert.throws(()=>f.service.approve(f.user,f.task,orderProgramHash(f.task)));await assert.rejects(f.service.execute(f.user,f.task));
 });
+
 test('提交前临时登录失败可在同一配置重新验证，旧授权不能直接重试',async()=>{
  const f=fixture();await f.service.generate(f.user,f.task);f.service.approve(f.user,f.task,orderProgramHash(f.task));
  f.setLoginError(Object.assign(new Error('暂时无法确认登录'),{code:'ORDER_LOGIN_UNVERIFIED'}));await f.service.execute(f.user,f.task);

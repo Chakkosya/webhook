@@ -14,7 +14,7 @@ function excerpt(value,limit,terms){
   return (start?'…':'')+text.slice(start,start+limit)+(start+limit<text.length?'…':'');
 }
 const scoreText=(value,terms)=>terms.reduce((score,term)=>score+(normalize(value).includes(term)?Math.min(term.length,12):0),0);
-function compactElement(el,terms){
+function compactElement(el,terms,maxOptions){
   const result={ref:el.ref};
   for(const key of ['tag','role','type','visible','disabled','readOnly','checked','formRef','parentRef'])if(nonempty(el[key]))result[key]=el[key];
   const seen=new Set();
@@ -28,7 +28,7 @@ function compactElement(el,terms){
   }
   if(el.options){
     const ranked=el.options.map((option,index)=>({option,index,score:(option.selected?1000:0)+scoreText(option.text,terms)+(terms.includes(normalize(option.text))?200:0)}));
-    const selected=ranked.sort((a,b)=>b.score-a.score||a.index-b.index).filter(({option})=>String(option.value).length<=600&&String(option.text).length<=400).slice(0,MAX_OPTIONS).sort((a,b)=>a.index-b.index);
+    const selected=ranked.sort((a,b)=>b.score-a.score||a.index-b.index).filter(({option})=>String(option.value).length<=600&&String(option.text).length<=400).slice(0,maxOptions).sort((a,b)=>a.index-b.index);
     result.options=selected.map(({option})=>({value:option.value,text:option.text,selected:!!option.selected,disabled:!!option.disabled}));
     if(selected.length<el.options.length)result.optionsOmitted=el.options.length-selected.length;
   }
@@ -38,15 +38,19 @@ function compactElement(el,terms){
 // The complete observation stays in the host for binding and transaction checks.
 // Assistance receives a bounded view selected by task evidence and DOM relationships.
 export function planningObservation(page,input={}){
+  const expanded=input.expanded===true;
+  const maxElements=expanded?288:MAX_ELEMENTS,maxChars=expanded?64000:MAX_CHARS,maxOptions=expanded?80:MAX_OPTIONS;
   const terms=termsFor(input),all=(page.elements||[]).filter(el=>el.type!=='password'),focusRefs=new Set(input.focusRefs||[]);
   const ownScore=el=>scoreText([el.accessibleName,el.label,el.text,el.name].filter(Boolean).join(' '),terms);
   const relatedForms=new Set(all.filter(el=>focusRefs.has(el.ref)||ownScore(el)>0).map(el=>el.formRef).filter(Boolean));
   const relatedContexts=new Set(all.filter(el=>ownScore(el)>0).map(el=>normalize(el.contextText)).filter(Boolean));
   const paymentPhase=!!input.context?.submissionStarted;
-  const candidates=all.filter(el=>el.visible!==false||focusRefs.has(el.ref)||el.formRef&&(relatedForms.has(el.formRef)||paymentPhase)).map((el,index)=>{
+  const couponEvidence=el=>!!input.order?.couponCode&&!paymentPhase&&!interactive.has(el.role)&&relatedContexts.has(normalize(el.contextText));
+  const activeForms=new Set(paymentPhase?all.filter(el=>el.visible!==false&&!el.disabled&&interactive.has(el.role)&&el.type!=='hidden').map(el=>el.formRef).filter(Boolean):[]);
+  const candidates=all.filter(el=>el.visible!==false||focusRefs.has(el.ref)||couponEvidence(el)||el.formRef&&(relatedForms.has(el.formRef)||paymentPhase)).map((el,index)=>{
     const control=interactive.has(el.role),own=ownScore(el),context=scoreText(el.contextText,terms);
-    const score=(focusRefs.has(el.ref)?10000:0)+own*8+context+(relatedForms.has(el.formRef)?32:0)+(relatedContexts.has(normalize(el.contextText))?24:0)+(control?(el.role==='link'?12:36):el.role==='heading'?18:4)+(el.visible===false?-30:0);
-    return {el,index,score,related:focusRefs.has(el.ref)||own>0||relatedForms.has(el.formRef)};
+    const score=(focusRefs.has(el.ref)?10000:0)+own*8+context+(relatedForms.has(el.formRef)?32:0)+(relatedContexts.has(normalize(el.contextText))?24:0)+(control?(el.role==='link'?12:36):el.role==='heading'?18:4)+(el.visible===false?-30:0)+(activeForms.has(el.formRef)?64:0)+(couponEvidence(el)?32:0);
+    return {el,index,score,related:focusRefs.has(el.ref)||own>0||relatedForms.has(el.formRef)||activeForms.has(el.formRef)};
   }).sort((a,b)=>b.score-a.score||a.index-b.index);
   const contexts={},contextIds=new Map(),elements=[];
   const result={observationId:page.observationId,url:page.url,title:excerpt(page.title,300,terms),text:excerpt(page.text,1400,terms),elements,contexts,forms:[],totalElements:page.totalElements??all.length,coverage:{selected:0,omitted:0,omittedRelevant:0,complete:false}};
@@ -54,13 +58,13 @@ export function planningObservation(page,input={}){
   if(page.frontend)result.frontend={untrusted:true,verified:false,source:page.frontend.source,scripts:(page.frontend.scripts||[]).slice(0,4).map(script=>({source:String(script.source||'').slice(0,300),operations:(script.operations||[]).slice(0,16),status:'candidate_only'}))};
   let used=JSON.stringify(result).length;
   for(const {el}of candidates){
-    if(elements.length>=MAX_ELEMENTS)break;
-    const compact=compactElement(el,terms),context=excerpt(el.contextText,460,terms),identity=normalize(context);
+    if(elements.length>=maxElements)break;
+    const compact=compactElement(el,terms,maxOptions),context=excerpt(el.contextText,460,terms),identity=normalize(context);
     let contextRef=contextIds.get(identity),newContext=false;
     if(identity){if(!contextRef){contextRef='c'+(contextIds.size+1);newContext=true;}compact.contextRef=contextRef;}
     const cost=JSON.stringify(compact).length+(newContext?JSON.stringify({[contextRef]:context}).length:0);
     // Reserve space for the exact relationship between retained fields and forms.
-    if(used+cost>MAX_CHARS-2800)continue;
+    if(used+cost>maxChars-2800)continue;
     if(newContext){contextIds.set(identity,contextRef);contexts[contextRef]=context;}
     elements.push(compact);used+=cost;
   }
@@ -68,7 +72,7 @@ export function planningObservation(page,input={}){
     const refs=new Set(elements.map(el=>el.ref)),selectedForms=new Set(elements.map(el=>el.formRef).filter(Boolean)),usedContexts=new Set(elements.map(el=>el.contextRef).filter(Boolean));
     for(const key of Object.keys(contexts))if(!usedContexts.has(key))delete contexts[key];
     result.forms=(page.forms||[]).filter(form=>selectedForms.has(form.ref)||refs.has(form.ref)).map(form=>({ref:form.ref,method:form.method,action:String(form.action??'').slice(0,600),fields:(form.fields||[]).filter(ref=>refs.has(ref)),omittedFields:(form.fields||[]).filter(ref=>!refs.has(ref)).length}));
-    result.coverage={selected:elements.length,omitted:all.length-elements.length,omittedRelevant:candidates.filter(item=>item.related&&!refs.has(item.el.ref)).length,complete:elements.length===all.length&&!elements.some(el=>el.optionsOmitted),selection:'current_task_and_form_relationships',limits:{elements:MAX_ELEMENTS,characters:MAX_CHARS,optionsPerControl:MAX_OPTIONS}};
+    result.coverage={selected:elements.length,omitted:all.length-elements.length,omittedRelevant:candidates.filter(item=>item.related&&!refs.has(item.el.ref)).length,complete:elements.length===all.length&&!elements.some(el=>el.optionsOmitted),selection:'current_task_and_form_relationships',limits:{elements:maxElements,characters:maxChars,optionsPerControl:maxOptions}};
     // Disclose omitted competing controls; a short view cannot turn them into
     // evidence that the retained button is the only matching action on the page.
     for(const element of elements){
@@ -81,6 +85,6 @@ export function planningObservation(page,input={}){
   relationships();
   // Keep the final envelope within the budget, including form metadata and the
   // ambiguity disclosure. Lowest priority elements leave the view first.
-  while(elements.length&&JSON.stringify(result).length>MAX_CHARS){elements.pop();relationships();}
+  while(elements.length&&JSON.stringify(result).length>maxChars){elements.pop();relationships();}
   return result;
 }

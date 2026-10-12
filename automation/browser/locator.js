@@ -18,6 +18,10 @@ export async function resolveSemanticTarget(page,observation,target){
   const marker=observation.observationId+':'+element.ref;
   const runtimeSelector='[data-agent-ref='+JSON.stringify(marker)+']';
   const candidates=locatorCandidates({...element,runtimeSelector,runtimeXPath:'xpath=//*[@data-agent-ref='+JSON.stringify(marker)+']'});
+  // Reuse the exact node marked by the current observation.
+  const direct=page.locator(runtimeSelector);
+  const count=await direct.count();
+  if(count===1&&(!element.visible||await direct.isVisible()))return {selector:runtimeSelector,strategy:'ref',meaning:target.meaning,confidence:target.confidence,attempts:[{strategy:'ref',matchCount:1,outcome:'matched'}]};
   const attempts=[];
   for(const candidate of candidates){
     const locator=candidate.strategy==='aria'?page.getByRole(candidate.role,{name:candidate.value,exact:true}):candidate.strategy==='text'?page.getByText(candidate.value,{exact:true}):candidate.strategy==='label'?page.getByLabel(candidate.value,{exact:true}):candidate.strategy==='placeholder'?page.getByPlaceholder(candidate.value,{exact:true}):candidate.strategy==='name'?page.locator('[name='+JSON.stringify(candidate.value)+']'):candidate.strategy==='id'?page.locator('[id='+JSON.stringify(candidate.value)+']'):page.locator(candidate.value);

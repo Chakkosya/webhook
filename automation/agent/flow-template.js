@@ -1,4 +1,5 @@
 import {agentError} from './model.js';
+import {matchesOrderConfiguration,parseOrderQuantity} from '../../lib/order-evidence.js';
 
 // The template defines business obligations and transaction boundaries only.
 // Merchant labels, names, selectors and page layouts never appear here.
@@ -14,7 +15,7 @@ export const COMMERCE_TEMPLATE=Object.freeze([
 const preparation=['click','fill','select','check','uncheck','configure','choosePayment','cart','review','wait','stop'];
 export function flowContext({order={},context={}}){
   let phase='prepare',allowedActions=[...preparation];
-  if(context.pendingVerification==='cart'){phase='verify_cart';allowedActions=['verify_cart','stop'];}
+  if(context.pendingVerification==='cart'){phase='verify_cart';allowedActions=['fill','select','verify_cart','review','stop'];}
   else if(context.pendingVerification==='coupon'){phase='verify_coupon';allowedActions=['verify_coupon','stop'];}
   else if(context.submissionStarted){phase='payment';allowedActions=['invoice','stop'];if(order.executionMode==='pay'&&context.receipt?.status==='ordered'&&!context.paymentStarted)allowedActions.push('pay');}
   else if(order.couponCode&&context.couponApplied!==true){allowedActions=allowedActions.filter(action=>action!=='review');allowedActions.push('apply_coupon');}
@@ -23,6 +24,17 @@ export function flowContext({order={},context={}}){
 export function stageForAction(action){return COMMERCE_TEMPLATE.find(stage=>stage.actions.includes(action))?.id||'recovery';}
 export function assertFlowStep(step,input){
   if(!flowContext(input).allowedActions.includes(step.action))throw agentError('AGENT_STEP_UNVERIFIED','当前流程阶段不能执行 '+step.action+'，必须先完成上一操作的核验');
+  if(input.context?.pendingVerification==='cart'&&['fill','select'].includes(step.action))assertCartQuantityCorrection(step,input);
+  return step;
+}
+export function assertCartQuantityCorrection(step,input){
+  const quantity=step.bindings?.quantity;
+  if(!step.bindings?.product||!quantity||step.target?.ref!==quantity.ref)throw agentError('AGENT_STEP_UNVERIFIED','修正购物车数量必须绑定当前商品和同一个数量控件');
+  const element=input.observation.elements.find(el=>el.ref===quantity.ref);
+  const option=step.action==='select'?(element?.options||[]).filter(option=>!option.disabled&&String(option.value)===String(step.value)):null;
+  const expected=input.order.quantity;
+  const matched=step.action==='select'?option.length===1&&parseOrderQuantity(option[0].text)===expected:String(step.value)===String(expected);
+  if(!matched)throw agentError('AGENT_STEP_UNVERIFIED','购物车数量只能修正为任务要求的数量');
   return step;
 }
 export function resolveValueSource(step,input){
@@ -37,7 +49,7 @@ export function resolveValueSource(step,input){
   }else throw agentError('AGENT_PLAN_INVALID','流程参数来源无效');
   if(step.action==='select'){
     const el=input.observation.elements.find(item=>item.ref===step.target?.ref);
-    const options=(el?.options||[]).filter(option=>!option.disabled&&String(option.text).normalize('NFKC').trim()===String(expected).normalize('NFKC').trim());
+    const options=(el?.options||[]).filter(option=>!option.disabled&&(step.valueFrom==='quantity'?parseOrderQuantity(option.text)===input.order.quantity:matchesOrderConfiguration(expected,option.text)));
     if(options.length!==1)throw agentError('AGENT_ELEMENT_MISSING','当前页面没有唯一匹配用户要求的选项');
     return {...step,value:options[0].value};
   }

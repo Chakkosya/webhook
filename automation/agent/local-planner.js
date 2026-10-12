@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {agentError} from './model.js';
+import {matchesOrderConfiguration} from '../../lib/order-evidence.js';
 import {validateStep} from './planner.js';
 import {flowContext,stageForAction,assertFlowStep,resolveValueSource} from './flow-template.js';
 import {planningObservation} from './observation-context.js';
@@ -12,11 +13,20 @@ const unique=items=>items.length===1?items[0]:null;
 const numericShape=value=>norm(value).replace(/\d+(?:[.,]\d+)*/g,'#');
 const amountSlots=new Set(['bindings.total','bindings.discount','bindings.balance']);
 const visible=el=>!!el&&el.visible!==false&&!el.disabled&&!['hidden','password'].includes(el.type);
+function routeFor(value){
+  const url=new URL(value);
+  for(const key of [...url.searchParams.keys()])if(/^utm_/i.test(key)||/^(?:gclid|dclid|fbclid|msclkid)$/i.test(key))url.searchParams.delete(key);
+  return url;
+}
+function scopeIdentity(scope){
+  const url=routeFor(scope.origin+scope.path+(scope.query||'')+(scope.fragment||''));
+  return JSON.stringify({...scope,query:url.search});
+}
 function scopeFor(input){
-  const url=new URL(input.observation.url),context=input.context||{};
+  const url=routeFor(input.observation.url),context=input.context||{};
   return {origin:url.origin,path:url.pathname,query:url.search,fragment:url.hash,phase:flowContext(input).phase,couponApplied:context.couponApplied??!input.order?.couponCode,receipt:context.receipt?.status||null};
 }
-const scopeKey=input=>JSON.stringify(scopeFor(input));
+const scopeKey=input=>scopeIdentity(scopeFor(input));
 function describe(el,slot,page){
   if(!el)return null;
   const cues=Object.fromEntries(['name','label','accessibleName','text','placeholder','href'].filter(key=>el[key]!=null&&el[key]!=='').map(key=>[key,String(el[key])]));
@@ -39,7 +49,7 @@ function locate(descriptor,page){
     if(descriptor.cues.href&&norm(el.href)===norm(descriptor.cues.href))return true;
     if(descriptor.form){const form=page.forms?.find(form=>form.ref===el.formRef);if(form&&form.method===descriptor.form.method&&form.action===descriptor.form.action)return true;}
     if(descriptor.context&&norm(el.contextText)===descriptor.context)return true;
-    return !descriptor.context&&!descriptor.form&&!descriptor.cues.href&&page.url===descriptor.route;
+    return !descriptor.context&&!descriptor.form&&!descriptor.cues.href&&routeFor(page.url).href===routeFor(descriptor.route).href;
   };
   const candidates=(page.elements||[]).filter(el=>compatible(descriptor,el)&&owned(el));
   const compare=(key,el)=>descriptor.dynamicText&&['text','accessibleName'].includes(key)?numericShape(el[key]):norm(el[key]);
@@ -84,7 +94,7 @@ function compile(step,input,{group,transient=false}={}){
   }catch{return null;}
 }
 function restore(recipe,input){
-  if(recipe.version!==2||JSON.stringify(recipe.scope)!==scopeKey(input))return null;
+  if(recipe.version!==2||scopeIdentity(recipe.scope)!==scopeKey(input))return null;
   try{
     let step=transformTargets(recipe.template,value=>{
       const el=locate(value.descriptor,input.observation);
@@ -97,7 +107,7 @@ function restore(recipe,input){
     }
     if(recipe.optionText&&!step.valueFrom){
       const el=input.observation.elements.find(el=>el.ref===step.target?.ref);
-      const option=unique((el?.options||[]).filter(option=>!option.disabled&&norm(option.text)===norm(recipe.optionText)));
+      const option=unique((el?.options||[]).filter(option=>!option.disabled&&matchesOrderConfiguration(recipe.optionText,option.text,{ignoreExpectedPrice:true})));
       if(!option)return null;
       step.value=option.value;
     }
@@ -123,7 +133,7 @@ const actionKey=step=>JSON.stringify(stable({...step,reason:undefined}));
 function recipeKey(recipe){
   if(recipe?.version!==2||!recipe.template)return null;
   const template=transformTargets(recipe.template,target=>({descriptor:target.descriptor}));
-  return JSON.stringify(stable({scope:recipe.scope,template:{...template,reason:undefined},optionText:recipe.optionText}));
+  return JSON.stringify(stable({scope:JSON.parse(scopeIdentity(recipe.scope)),template:{...template,reason:undefined},optionText:recipe.optionText}));
 }
 function satisfied(step,recipe,input,completed){
   if(step.action==='choosePayment'){
@@ -142,7 +152,7 @@ function satisfied(step,recipe,input,completed){
 async function rememberedStep(recipes,input,completed,onSatisfied){
   const groups=new Map();
   for(const recipe of recipes){
-    if(recipe.version!==2||JSON.stringify(recipe.scope)!==scopeKey(input))continue;
+    if(recipe.version!==2||scopeIdentity(recipe.scope)!==scopeKey(input))continue;
     const list=groups.get(recipe.group)||[];list.push(recipe);groups.set(recipe.group,list);
   }
   const candidates=[];
@@ -170,7 +180,7 @@ export function clarificationFor(error,observation){
 const needsInput=(message,observation)=>Object.assign(agentError('AGENT_NEEDS_INPUT',message),{orderInput:clarificationFor(new Error(message),observation)});
 export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEvent=()=>{},allowAssistance=true,onSatisfied=async()=>{}}={}){
   let lastInput,lastStep,lastRecipe,pending=[];
-  const failedPages=new Map(),metadata=new WeakMap(),completed=new Set(),completedClicks=[];
+  const expandedPages=new Set(),failedPages=new Map(),metadata=new WeakMap(),completed=new Set(),completedClicks=[];
   const rememberRecipe=recipe=>{const key=recipeKey(recipe);completed.add(key);if(!recipes.some(item=>recipeKey(item)===key)){recipes.push(recipe);onRemember(recipes);}};
   const invalidate=recipe=>{
     if(!recipe)return;
@@ -206,11 +216,16 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
       const key=scopeKey(input);
       if((failedPages.get(key)||0)>=2)throw needsInput('当前步骤的动态绑定仍不确定，需要你确认。',input.observation);
       try{
-        const current=recipes.filter(item=>item.version===2&&JSON.stringify(item.scope)===key);
+        const current=recipes.filter(item=>item.version===2&&scopeIdentity(item.scope)===key);
         const knownSteps=[...new Map(current.map(item=>{const state={stage:item.stage,action:item.template.action,completed:completed.has(recipeKey(item)),needsBinding:!completed.has(recipeKey(item))&&!restore(item,input)};return [JSON.stringify(state),state];})).values()];
         const focusRefs=current.flatMap(item=>{const restored=restore(item,input);if(!restored)return [];const refs=[];transformTargets(restored,target=>{refs.push(target.ref);return target;});return refs;});
-        const observation=planningObservation(input.observation,{...input,focusRefs});
+        const observation=planningObservation(input.observation,{...input,focusRefs,expanded:expandedPages.has(key)});
         const result=await assist({...input,flow:{...flowContext(input),knownSteps},observation});
+        const first=result.steps?.[0]||result;
+        if(first.action==='stop'&&!observation.coverage.complete&&!expandedPages.has(key)&&!/out\s+of\s+stock|sold\s+out|captcha|缺货|售罄|验证码|二次验证/i.test(first.reason||'')){
+          expandedPages.add(key);
+          throw agentError('AGENT_OBSERVATION_INCOMPLETE','当前摘要可能省略了必要控件，将扩大当前页面观察范围并重新识别。'+String(first.reason||'').slice(0,300));
+        }
         const observedRefs=new Set(observation.elements.map(el=>el.ref));
         const steps=(result.steps||[result]).map(value=>{
           const validated=resolveValueSource(validateStep(value),input);
@@ -227,19 +242,25 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
         });
         if(steps.length<1||steps.length>20||steps.slice(0,-1).some(value=>!settings.has(value.action)))throw agentError('AGENT_PLAN_INVALID','每页流程须在导航或交易后重新观察');
         for(const value of steps)assertFlowStep(value,input);
-        step=steps[0];recipe=compile(step,input,{group,transient:true});
-        pending=steps.slice(1).map(next=>{
+        const compiledSteps=steps.map(next=>{
           const compiled=compile(next,input,{group,transient:true});
           if(!compiled)throw agentError('AGENT_PLAN_INVALID','当前步骤缺少可观察的动态绑定');
           return compiled;
         });
+        let nextIndex=0;
+        // Register satisfied defaults and continue the same AI batch without another
+        // browser action or observation. Keep a terminal action to advance the flow.
+        while(nextIndex<steps.length-1&&satisfied(steps[nextIndex],compiledSteps[nextIndex],input,completed)){
+          await acceptSatisfied(steps[nextIndex],compiledSteps[nextIndex],input);nextIndex++;
+        }
+        step=steps[nextIndex];recipe=compiledSteps[nextIndex];pending=compiledSteps.slice(nextIndex+1);
       }catch(error){
         if(['AGENT_LOW_CONFIDENCE','AGENT_PLAN_INVALID','AGENT_STEP_UNVERIFIED'].includes(error.code))failedPages.set(key,(failedPages.get(key)||0)+1);
         if(error.code==='AGENT_LOW_CONFIDENCE')error.orderInput=clarificationFor(error,input.observation);
         throw error;
       }
     }
-    if(step.action==='click'&&completedClicks.some(item=>JSON.stringify(item.scope)===scopeKey(input)&&locate({...item.template.target.descriptor,actionTarget:false},input.observation)?.ref===step.target?.ref))throw needsInput('这个入口已成功操作，当前页面仍未显示可继续的步骤，请确认展开后的配置或下一入口。',input.observation);
+    if(step.action==='click'&&completedClicks.some(item=>scopeIdentity(item.scope)===scopeKey(input)&&locate({...item.template.target.descriptor,actionTarget:false},input.observation)?.ref===step.target?.ref))throw needsInput('这个入口已成功操作，当前页面仍未显示可继续的步骤，请确认展开后的配置或下一入口。',input.observation);
     if(recipe&&completed.has(recipeKey(recipe))&&!settings.has(step.action))throw needsInput('当前步骤已经完成，页面未出现可确认的下一步；请确认当前状态。',input.observation);
     lastStep=validateStep(step);metadata.set(lastStep,{group,recipe});
     onEvent('步骤来源',{source,stage:stageForAction(step.action),action:step.action});return lastStep;

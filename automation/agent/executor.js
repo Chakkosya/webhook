@@ -1,11 +1,12 @@
 import {diagnosticError,diagnosticPage,diagnosticAIOutput,diagnosticReceipt} from '../../lib/order-execution-log.js';
-import {parseOrderQuantity,matchesProductSelection} from '../../lib/order-evidence.js';
+import {parseOrderQuantity,matchesProductSelection,matchesOrderConfiguration} from '../../lib/order-evidence.js';
 import {orderFailure} from '../../lib/order-diagnostics.js';
 import {DEFAULT_ORDER_TIMEOUTS,createOrderDeadline,abortable} from '../../lib/order-timeouts.js';
 import {validateStep} from './planner.js';
 import {agentError,validateTarget} from './model.js';
 import {canRecover,recoveryContext,isPlanningUncertainty} from './recovery.js';
 import {clarificationFor} from './local-planner.js';
+import {assertCartQuantityCorrection} from './flow-template.js';
 import {pageType} from '../adapters/generic-commerce.js';
 const checkoutKeys={submit:'submitSelector',product:'productSelector',quantity:'quantitySelector',total:'totalSelector',currency:'currencySelector'};
 const couponKeys={input:'inputSelector',apply:'applySelector',appliedCode:'appliedCodeSelector',discount:'discountSelector'};
@@ -32,7 +33,7 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
   const budget=createOrderDeadline({signal,timeoutMs,code:'AGENT_BUDGET_EXCEEDED',stage:'动态页面探索'});signal=budget.signal;
   const methods=Object.fromEntries(Object.entries(session.methods).map(([name,method])=>[name,(...args)=>abortable(()=>method.apply(session.methods,args),signal)]));
   const planWithinBudget=input=>abortable(()=>plan({...input,signal}),signal),history=[],deadline=Date.now()+timeoutMs;
-  let repairs=0,pendingVerification=null,couponFailed=false,couponApplied=!order.couponCode,feedback=null,image=null,stage='observation',currentAction=null,lastState='',stagnant=0,queuedObservation=null;
+  let repairs=0,pendingVerification=null,couponFailed=false,couponApplied=!order.couponCode,feedback=null,image=null,stage='observation',currentAction=null,lastState='',stagnant=0,queuedObservation=null,progressAfterStep=false;
   const completed=new Set();
   const resolve=async target=>{validateTarget(target);const located=await methods.resolveSemantic(target);emit('语义定位',{meaning:target.meaning,ref:target.ref,strategy:located.strategy,confidence:target.confidence,selector:located.selector,attempts:located.attempts});return located.selector;};
   const bind=async (bindings,map,required=Object.keys(map))=>{
@@ -40,13 +41,22 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
     const result={};for(const [key,name]of Object.entries(map))if(bindings[key])result[name]=await resolve(bindings[key]);return result;
   };
   const read=async target=>{validateTarget(target);return methods.readSemantic(target);};
+  const verifyCart=async step=>{
+    if(!step.bindings?.product||!step.bindings?.quantity)throw agentError('AGENT_STEP_UNVERIFIED','购物车缺少商品和数量证据');
+    const product=await read(step.bindings.product),quantity=await read(step.bindings.quantity);
+    const identity=order.product||order.productSelection?.text;
+    const matched=!!normalize(product.text)&&(!identity||matchesProductSelection(identity,product.text))&&parseOrderQuantity(quantity.value??quantity.text)===order.quantity;
+    emit('购物车核验',{expected:{product:order.product,quantity:order.quantity},observed:{product:product.text,quantity:quantity.value??quantity.text},matched});
+    if(!matched)throw agentError('AGENT_STEP_UNVERIFIED','购物车商品或数量与任务不符');
+    pendingVerification=null;
+  };
   const configuration=async step=>{
     const values=[];
     for(const required of program.workflow.requirements){
       const items=(step.configuration||[]).filter(item=>item.name===required.name);
       if(items.length!==1)throw Object.assign(agentError('AGENT_CONFIGURATION_UNVERIFIED',"缺少商品配置核验："+required.name),{orderAmbiguity:{kind:'configuration',requirement:required.name,expected:required.value}});
       const observed=await read(items[0].target);
-      const matched=normalize(observed.value??observed.text)===normalize(required.value);
+      const matched=matchesOrderConfiguration(required.value,observed.value??observed.text);
       emit('配置核验',{name:required.name,expected:required.value,observed:observed.value??observed.text,matched,target:items[0].target});
       if(!matched)throw Object.assign(agentError('AGENT_CONFIGURATION_UNVERIFIED',"商品配置与已确认要求不符："+required.name),{orderAmbiguity:{kind:'configuration',requirement:required.name,expected:required.value,observed:String(observed.value??observed.text??'').slice(0,300),target:items[0].target}});
       values.push({...required,selector:await resolve(items[0].target)});
@@ -61,6 +71,10 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
       stage='observation';currentAction=null;
       observation=queuedObservation||await methods.observe();queuedObservation=null;
       const state=JSON.stringify([observation.url,observation.text,(observation.elements||[]).map(({text,value,checked,disabled})=>({text,value,checked,disabled}))]);
+      // A verified action followed by a changed page starts a new obstacle budget.
+      // Failed retries and waits on an unchanged page cannot replenish it.
+      if(progressAfterStep&&state!==lastState)repairs=0;
+      progressAfterStep=false;
       stagnant=state===lastState?stagnant+1:0;lastState=state;
       if(stagnant>=4)throw agentError('AGENT_NO_PROGRESS','同页连续无进展，请重新识别流程分支');
       stage='planning';
@@ -76,7 +90,14 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
           throw error;
         }
         if(session.submissionStarted&&!['invoice','pay'].includes(step.action))throw agentError('AGENT_PLAN_INVALID',"订单已提交，只能处理原订单账单");
-        if(pendingVerification==='cart'&&step.action!=='verify_cart')throw agentError('AGENT_STEP_UNVERIFIED',"购物车操作后必须先核验商品和数量");
+        const cartCorrection=pendingVerification==='cart'&&['fill','select'].includes(step.action);
+        if(cartCorrection){
+          assertCartQuantityCorrection(step,planInput);
+          const product=await read(step.bindings.product),identity=order.product||order.productSelection?.text;
+          if(!normalize(product.text)||identity&&!matchesProductSelection(identity,product.text))throw agentError('AGENT_STEP_UNVERIFIED','修正数量前必须确认当前购物车商品与任务一致');
+        }
+        if(pendingVerification==='cart'&&step.action==='review')await verifyCart(step);
+        if(pendingVerification==='cart'&&step.action!=='verify_cart'&&!cartCorrection)throw agentError('AGENT_STEP_UNVERIFIED',"购物车操作后必须先核验商品和数量");
         let result;
         if(step.action==='wait'){
           const milliseconds=Number(step.value);if(!Number.isInteger(milliseconds)||milliseconds<100||milliseconds>2000)throw agentError('AGENT_PLAN_INVALID','等待必须在 100 到 2000 毫秒之间');
@@ -86,6 +107,17 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
           if(step.action==='choosePayment')result=await methods.choosePayment({selector:target,value:step.value});
           else if(['cart','configure'].includes(step.action)){
             const checks=step.bindings?.product?{productSelector:await resolve(step.bindings.product)}:{};
+            // A current value can establish preparation evidence without rewriting it.
+            if(step.bindings?.quantity){
+              const field=observation.elements.find(el=>el.ref===step.bindings.quantity.ref),selected=field?.options?.find(option=>option.selected);
+              await methods.registerPreparation?.({action:field?.tag==='select'?'select':'fill',target:step.bindings.quantity,value:selected?.value??String(order.quantity)});
+            }
+            for(const item of step.configuration||[]){
+              const required=program.workflow.requirements.find(required=>required.name===item.name);
+              if(!required)continue;
+              const observed=await read(item.target);
+              if(matchesOrderConfiguration(required.value,observed.value??observed.text))await methods.registerPreparation?.({action:observed.tag==='select'?'select':'fill',target:item.target,value:observed.selectedValue??observed.value});
+            }
             if(step.action==='cart')pendingVerification='cart';
             result=await methods[step.action](target,checks);
           }else result=await methods[step.action](target,...(['fill','select'].includes(step.action)?[step.value]:[]));
@@ -100,13 +132,7 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
           }
           if(step.action==='cart'||result?.cartMutation)pendingVerification='cart';
         }else if(step.action==='verify_cart'){
-          if(!step.bindings?.product||!step.bindings?.quantity)throw agentError('AGENT_STEP_UNVERIFIED',"购物车缺少商品和数量证据");
-          const product=await read(step.bindings.product),quantity=await read(step.bindings.quantity);
-          const identity=order.product||order.productSelection?.text;
-          const matched=!!normalize(product.text)&&(!identity||matchesProductSelection(identity,product.text))&&parseOrderQuantity(quantity.value??quantity.text)===order.quantity;
-          emit('购物车核验',{expected:{product:order.product,quantity:order.quantity},observed:{product:product.text,quantity:quantity.value??quantity.text},matched});
-          if(!matched)throw agentError('AGENT_STEP_UNVERIFIED',"购物车商品或数量与任务不符");
-          pendingVerification=null;
+          await verifyCart(step);
         }else if(step.action==='apply_coupon'){
           if(!order.couponCode)throw agentError('AGENT_PLAN_INVALID',"未授权应用优惠码");
           const checks=await bind(step.bindings,couponKeys),totals=await bind(step.bindings,checkoutKeys);
@@ -160,6 +186,7 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
           await onLearn({history,status:result.status});return result;
         }
         plan.remember?.({step,input:originalPlanInput});
+        progressAfterStep=!['wait','verify_cart'].includes(step.action);
         const entry={action:step.action,pageType:pageType(observation),meanings:[...(step.target?[step.target.meaning]:[]),...Object.values(step.bindings||{}).map(t=>t.meaning)],verified:true};
         history.push(entry);if(['verify_cart'].includes(step.action))completed.add(step.action);emit('动态步骤完成',{...entry,step:index+1,durationMs:Date.now()-stepStarted,pendingVerification,receipt:diagnosticReceipt(result)});
       }catch(error){
@@ -177,6 +204,6 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
       }
     }
     throw agentError('AGENT_BUDGET_EXCEEDED',"动态执行达到最大操作数");
-  }catch(error){error.orderFailure=orderFailure(error,{stage,action:currentAction,submissionStarted:session.submissionStarted,paymentStarted:session.paymentStarted});error.orderPreparation={verifiedStages:[...completed],observedSteps:history.filter(item=>item.verified).map(({action,pageType})=>({action,pageType})),pending:['checkout','request_contract','two_preflights'],candidates:[],at:new Date().toISOString()};await onLearn({history,status:'failed',error}).catch(()=>{});throw error;}
+  }catch(error){error.orderFailure=orderFailure(error,{stage,action:currentAction,submissionStarted:session.submissionStarted,paymentStarted:session.paymentStarted});error.orderPreparation={verifiedStages:[...completed],observedSteps:history.filter(item=>item.verified).map(({action,pageType})=>({action,pageType})),pending:['checkout','request_contract','preflight'],candidates:[],at:new Date().toISOString()};await onLearn({history,status:'failed',error}).catch(()=>{});throw error;}
   finally{budget.close();}
 }

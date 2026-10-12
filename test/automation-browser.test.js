@@ -49,7 +49,8 @@ test('真实浏览器在未知后续页面和变化 DOM 上探索、提交、付
   const launch=options=>chromium.launch({...options,executablePath:executable});
   const business=validateOrderProgram({summary:'Generic commerce',workflow:{version:2,requirements:[{name:'Cycle',value:'Monthly'}]}});
   const baseOrder={product:'Product A',quantity:1,maxTotal:20,currency:'USD',paymentMethod:{kind:'balance',name:'账户余额'},executionMode:'submit'};
-  const plan=async({observation:page,context,order})=>{
+  const plan=async({observation:observed,context,order})=>{
+    const page={...observed,elements:observed.elements.map(el=>({...el,text:el.text||el.accessibleName||el.label||'',label:el.label||el.accessibleName||'',placeholder:el.placeholder||el.accessibleName||'',contextText:el.contextText||observed.contexts?.[el.contextRef]||''}))};
     const action=step=>({reason:'Observed merchant semantics',...step});
     if(page.title==='Store category')return action({action:'click',target:target(page,'purchase',el=>el.role==='link'&&el.text==='Order Now'&&el.contextText.includes('Product A'))});
     if(context.pendingVerification==='cart')return action({action:'verify_cart',bindings:{product:text(page,'product','Product A'),quantity:quantity(page)}});
@@ -115,45 +116,49 @@ test('真实浏览器在未知后续页面和变化 DOM 上探索、提交、付
       try{
         const observed=await session.methods.observe();assert.ok(observed.html);assert.ok(observed.domTree.length);assert.equal(observed.forms.length,0);assert.equal(observed.elements.filter(el=>el.role==='link'&&el.text==='Order Now').length,2);assert.ok(observed.elements.some(el=>el.contextText.includes('Product A')&&el.contextText.includes('64G RAM')));
         const result=await runCommerceAgent(business,order,session,{plan});assert.equal(result.status,'prepared');assert.equal(result.review.quantity,1);assert.deepEqual(result.review.configuration,[{name:'Cycle',value:'Monthly'}]);assert.equal(counts.orders,0);
-        assert.doesNotMatch(JSON.stringify(evidence.at(-1).observation),/private-csrf-token/);assert.match(evidence.at(-1).image,/^data:image\/png;base64,/);
+        assert.equal(evidence.length,0);assert.doesNotMatch(JSON.stringify(await session.methods.observe()),/private-csrf-token/);
       }finally{await session.close();}
     });
+    const prepare=async order=>{
+      const browser=await createOrderBrowser({...order,program:business,dryRun:true},{launch});
+      try{const trial=await runCommerceAgent(business,order,browser,{plan});return {...order,program:business,submissionContract:trial.requestContract};}finally{await browser.close();}
+    };
     await t.test('最终提交读取新页面的订单号，不需要未来 selector',async()=>{
-      let confirmed=0;const order={...baseOrder,url:base+'/start?v=b'},session=await createOrderBrowser(order,{launch,onBeforeSubmit:async review=>{assert.equal(review.total,10);confirmed++;}});
+      let confirmed=0;const order=await prepare({...baseOrder,url:base+'/start?v=b'}),session=await createOrderBrowser(order,{launch,onBeforeSubmit:async review=>{assert.equal(review.total,10);confirmed++;}});
       try{const result=await runCommerceAgent(business,order,session,{plan});assert.equal(result.status,'ordered');assert.equal(result.orderId,'ORD-1');assert.equal(confirmed,1);assert.equal(counts.orders,1);}finally{await session.close();}
     });
     await t.test('仅在当前原账单观察之后生成付款动作，提交/付款各一次',async()=>{
-      let approved=0;const order={...baseOrder,url:base+'/start?v=a',executionMode:'pay'},session=await createOrderBrowser(order,{launch,onBeforeSubmit:async()=>approved++,onBeforePayment:async reviewed=>{assert.equal(reviewed.invoiceId,'42');approved++;}});
+      let approved=0;const order=await prepare({...baseOrder,url:base+'/start?v=a',executionMode:'pay'}),session=await createOrderBrowser(order,{launch,onBeforeSubmit:async()=>approved++,onBeforePayment:async reviewed=>{assert.equal(reviewed.invoiceId,'42');approved++;}});
       try{const result=await runCommerceAgent(business,order,session,{plan});assert.equal(result.status,'paid');assert.equal(approved,2);assert.equal(counts.orders,2);assert.equal(counts.payments,1);}finally{await session.close();}
     });
     await t.test('网站付款方式经过多次观察仍保持实际选择',async()=>{
-      const order={...baseOrder,url:base+'/start?v=w',executionMode:'pay',paymentMethod:{kind:'website',name:'Alipay'}},session=await createOrderBrowser(order,{launch});
+      const order=await prepare({...baseOrder,url:base+'/start?v=w',executionMode:'pay',paymentMethod:{kind:'website',name:'Alipay'}}),session=await createOrderBrowser(order,{launch});
       try{const result=await runCommerceAgent(business,order,session,{plan});assert.equal(result.status,'paid');assert.equal(result.paymentMethod.label,'Alipay');assert.equal(counts.orders,3);assert.equal(counts.payments,2);}finally{await session.close();}
     });
     await t.test('优惠应用跳转后所有 ID 变化，重新理解页面核验优惠和实际总价',async()=>{
       const order={...baseOrder,url:base+'/checkout?v=b',couponCode:'SAVE20',dryRun:true},session=await createOrderBrowser(order,{launch});
       try{const result=await runCommerceAgent(business,order,session,{plan});assert.equal(result.status,'prepared');assert.equal(result.review.total,8);assert.equal(result.review.coupon.discount,2);assert.equal(counts.coupons,1);assert.equal(counts.orders,3);}finally{await session.close();}
     });
-        await t.test('服务层使用真实浏览器探索两次、保存经验、审批后提交一次',async()=>{
-      const task=validateOrderTask({...baseOrder,url:base+'/catalog?v=b',monitorId:'native-monitor'}),user={id:'native-agent-user',settings:{},monitors:[{id:'native-monitor',kind:'webpage'}],orderTasks:[task],orderAccounts:[{monitorId:'native-monitor',loginUrl:task.url,revision:1,status:'saved',session:{state:{cookies:[],origins:[]},check:{url:task.url}}}]};
+        await t.test('服务层使用真实浏览器探索一次、保存经验、审批后提交一次',async()=>{
+      const task=validateOrderTask({...baseOrder,url:base+'/catalog?v=b',instruction:'Cycle Monthly',monitorId:'native-monitor'}),user={id:'native-agent-user',settings:{},monitors:[{id:'native-monitor',kind:'webpage'}],orderTasks:[task],orderAccounts:[{monitorId:'native-monitor',loginUrl:task.url,revision:1,status:'saved',session:{state:{cookies:[],origins:[]},check:{url:task.url}}}]};
       let businessAttempts=0,listingRefusals=0;
       const service=createOrderService({persist:()=>{},openBrowser:(order,options)=>createOrderBrowser(order,{...options,launch}),requestAI:async(_user,messages)=>{
-        if(messages[0].content===BUSINESS_PROMPT){const input=JSON.parse(messages[1].content);assert.equal(input.phase,'business_sop');assert.equal(input.discovery.followPagesAtRuntime,true);if(++businessAttempts===1)return {error:'Insufficient evidence: the category listing does not include cart or checkout DOM. Please provide confirmation page snapshots and checkout selectors.'};assert.match(input.feedback.error,/业务 SOP 不需要未来页面/);return {summary:'动态探索与核验',workflow:{version:2,requirements:[{name:'Cycle',value:'Monthly'}]}};}
+        if(messages[0].content===BUSINESS_PROMPT){const input=JSON.parse(messages[1].content);assert.equal(input.phase,'business_sop');assert.equal(input.page,undefined);if(++businessAttempts===1)return {error:'Insufficient evidence: the category listing does not include cart or checkout DOM. Please provide confirmation page snapshots and checkout selectors.'};assert.match(input.feedback.error,/业务 SOP 不需要未来页面/);return {summary:'动态探索与核验',workflow:{version:2,requirements:[{name:'Cycle',value:'Monthly'}]}};}
         const content=messages[1].content,input=JSON.parse(Array.isArray(content)?content.find(part=>part.type==='text').text:content);if(input.page.title==='Store category'&&listingRefusals++===0)return {action:'stop',reason:'Insufficient evidence: cannot determine checkout selectors without cart and confirmation page snapshots.'};return plan({observation:input.page,context:input.context,order:input.order});
       }});
-      const original=counts.orders;await service.discover(user,task);assert.equal(task.status,'ready');assert.equal(task.enabled,false);assert.equal(task.trial.preflightPasses,2);assert.equal(task.program.code,undefined);assert.equal(counts.orders,original);assert.equal(businessAttempts,2);assert.ok(user.orderExecutionLogs[0].events.some(event=>event.action==='重新观察并修复'));
+      const original=counts.orders;await service.discover(user,task);assert.equal(task.status,'ready');assert.equal(task.enabled,false);assert.equal(task.trial.preflightPasses,1);assert.equal(task.program.code,undefined);assert.equal(counts.orders,original);assert.equal(businessAttempts,2);assert.ok(user.orderExecutionLogs[0].events.some(event=>event.action==='重新观察并修复'));
       service.approve(user,task,orderProgramHash(task));await service.execute(user,task);assert.equal(task.status,'ordered');assert.equal(counts.orders,original+1);assert.equal((await service.profile(user,task)).outcomes.ordered,1);
     });
-    await t.test('已发现的真实购买流程在两次试跑与一次提交中由代码复用',async()=>{
-      const recipes=[],beforeOrders=counts.orders;let assistance=0,discoveredCalls;
-      for(let pass=0;pass<3;pass++){
-        const order={...baseOrder,url:base+'/catalog?v=a',dryRun:pass<2};
+    await t.test('已发现的真实购买流程在一次试跑与一次提交中由代码复用',async()=>{
+      const recipes=[],beforeOrders=counts.orders;let assistance=0,discoveredCalls,submissionContract;
+      for(let pass=0;pass<2;pass++){
+        const order={...baseOrder,url:base+'/catalog?v=a',program:business,dryRun:pass===0,submissionContract};
         const session=await createOrderBrowser(order,{launch});
         try{
           const assisted=createAssistedPlanner(async input=>{assistance++;return plan(input);},{recipes});
           const result=await runCommerceAgent(business,order,session,{plan:assisted});
-          assert.equal(result.status,pass<2?'prepared':'ordered');
-          assert.equal(counts.orders,beforeOrders+(pass===2?1:0));
+          assert.equal(result.status,pass===0?'prepared':'ordered');if(pass===0)submissionContract=result.requestContract;
+          assert.equal(counts.orders,beforeOrders+(pass===1?1:0));
           if(pass===0){discoveredCalls=assistance;assert.ok(discoveredCalls>0);}else assert.equal(assistance,discoveredCalls,'known flow must not ask AI again');
         }finally{await session.close();}
       }

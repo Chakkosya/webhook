@@ -96,19 +96,24 @@ try{
   assert.equal((await accounts.check(financialUser,financialMonitor)).status,'saved');
   assert.match((await accounts.productPreview(financialUser,financialMonitor,{url:base+'/product'})).html,/<h1 id="product">Product A<\/h1>/);
   let generated=0;
-  const service=createOrderService({persist:()=>{},requestAI:async()=>{generated++;return {summary:'准备实际商品并核对订单',workflow:{version:1,prepareCode:'function(order,browser){browser.goto(order.url);browser.fill("#quantity",String(order.quantity));if(browser.exists("#ready"))browser.wait("#ready");return {ready:true};}',paymentCode:'function(){return {checks:{paySelector:"#pay",invoiceSelector:"#invoice-id",totalSelector:"#invoice-total",currencySelector:"#invoice-currency",confirmationSelector:"#paid"}};}'},checkout};}});
+  const service=createOrderService({persist:()=>{},requestAI:async(_user,messages)=>{
+    generated++;const {page}=JSON.parse(messages[1].content);
+    if(!page.elements.some(el=>el.id==='ready'&&el.visible!==false))return {action:'wait',reason:'Wait for the fixture background timer',value:1000};
+    const bind=(meaning,id)=>{const el=page.elements.find(el=>el.id===id);assert.ok(el,id);return {meaning,ref:el.ref,confidence:0.95};};
+    return {action:'review',reason:'Review observed checkout',bindings:Object.fromEntries(['submit','product','quantity','total','currency'].map(key=>[key,bind(key,key)]))};
+  }});
   const task=validateOrderTask({monitorId:financialMonitor.id,url:base+'/product?delayed=1',product:'Product A',quantity:1,maxTotal:10,currency:'USD',executionMode:'pay'});financialUser.orderTasks.push(task);
-  await service.generate(financialUser,task);assert.equal(task.status,'ready');assert.equal(task.trial.preflightPasses,2);assert.equal(generated,1,'Account background requests must not force repeated AI generation');assert.ok(task.trial.trace.some(item=>item.action==='拦截后台请求'&&item.detail.includes('试跑')),'Delayed background requests after login verification must stay harmless and blocked');
+  await service.generate(financialUser,task);assert.equal(task.status,'ready');assert.equal(task.trial.preflightPasses,1);assert.equal(generated,2,'One bounded wait and one checkout plan; background traffic cannot restart generation');assert.ok(task.trial.trace.some(item=>item.action==='拦截后台请求'&&item.detail.includes('试跑')),'Delayed background requests after login verification must stay harmless and blocked');
   await assert.rejects(createOrderBrowser({url:url+'&missing=1'},{storageState:saved.state,loginCheck:{...financialSaved.check,url:url+'&missing=1'},accountReadOnly:true,loginVerificationTimeoutMs:300}),error=>error.code==='ORDER_LOGIN_UNVERIFIED');
   const direct=base+target+(target.includes('?')?'&':'?')+'token=diagnostic-secret';
   await assert.rejects(createOrderBrowser({url:direct},{storageState:saved.state,loginOnly:true}),error=>error.code==='ORDER_REQUEST_BLOCKED'&&/GET /.test(error.message)&&!error.message.includes('diagnostic-secret'));
  }
- assert.equal(requests.filter(r=>r.method==='POST').length,backgroundPosts,'Financial background requests never reach the merchant during save, restore, preview or two trials');
- console.log('PASS financial background requests, including delayed timers after account verification, stay blocked without poisoning login saving, account checks, preview or two real SOP trials');
+ assert.equal(requests.filter(r=>r.method==='POST').length,backgroundPosts,'Financial background requests never reach the merchant during save, restore, preview or one trial');
+ console.log('PASS financial background requests, including delayed timers after account verification, stay blocked without poisoning login saving, account checks, preview or one real SOP trial');
  browser=await createOrderBrowser({url:base+'/product',dryRun:true,executionMode:'pay'},{storageState:saved.state});
  await assert.rejects(browser.methods.click('#unverified'),error=>error.code==='ORDER_REQUEST_BLOCKED'&&/POST \/pay/.test(error.message));await browser.close();browser=null;
  browser=await createOrderBrowser({url:base+'/unsafe-cart'},{storageState:saved.state});
- await assert.rejects(browser.methods.cart('#cart'),error=>error.code==='ORDER_REQUEST_BLOCKED');await browser.close();browser=null;
+ await assert.rejects(browser.methods.cart('#cart'),error=>['ORDER_REQUEST_BLOCKED','AGENT_NEEDS_INPUT'].includes(error.code));await browser.close();browser=null;
  assert.equal(requests.filter(r=>r.method==='POST').length,backgroundPosts);
  console.log('PASS direct financial navigation, AI-triggered payment and a disguised checkout cart remain blocked');
 }finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}

@@ -9,8 +9,8 @@ export function pageType(page){
   return 'product_or_other';
 }
 export function confirmationEvidence(page,kind){
-  const negative=/unpaid|not\s+paid|unsuccessful|pending|failed|declined|未支付|未付款|失败|失敗/i;
-  const success=kind==='payment'?/\bpaid\b|payment\s+(?:successful|complete)|已支付|支付成功|已付款|payée?|bezahlt|pagad[oa]|pagat[oa]|支払済|支払い完了|결제\s*완료/i:/order\s+(?:confirmed|placed|successful)|thank\s+you\s+for\s+your\s+(?:order|purchase)|订单(?:提交|创建)?成功|訂單成功|下单成功/i;
+  const negative=kind==='order'?/unsuccessful|failed|declined|not\s+(?:created|placed|confirmed|received)|失败|失敗/i:/unpaid|not\s+paid|unsuccessful|pending|failed|declined|未支付|未付款|失败|失敗/i;
+  const success=kind==='payment'?/\bpaid\b|payment\s+(?:successful|complete)|已支付|支付成功|已付款|payée?|bezahlt|pagad[oa]|pagat[oa]|支払済|支払い完了|결제\s*완료/i:/\border\s+(?:(?:(?:number|id)\s*[:#]?\s*|#\s*)[\w-]+\s+)?(?:(?:has\s+been|was|is)\s+)?(?:confirmed|placed|created|received|successful)\b|thank\s+you\s+for\s+your\s+(?:order|purchase)|订单(?:提交|创建)?成功|訂單成功|下单成功/i;
   const idPattern=/(?:order\s*(?:number\b|id\b|#)|订单号|訂單編號|订单编号|注文番号)\s*[:：#]?\s*([\w-]{1,100})/i;
   const candidates=(page.elements||[]).filter(el=>el.visible&&el.text&&el.text.length<=500&&!negative.test(el.text));
   const explicit=candidates.find(el=>success.test(el.text));

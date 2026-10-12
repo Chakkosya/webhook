@@ -5,11 +5,12 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {validateOrderProgram,validateOrderTask,createOrderService,orderProgramHash} from '../lib/orders.js';
 import {BUSINESS_SOP,validateBusinessWorkflow,agentError} from '../automation/agent/model.js';
-import {validateStep,createPlanner} from '../automation/agent/planner.js';
+import {validateStep,createPlanner,BUSINESS_PROMPT} from '../automation/agent/planner.js';
 import {locatorCandidates,resolveSemanticTarget} from '../automation/browser/locator.js';
 import {discoverCommerceSite} from '../automation/browser/crawler.js';
 import {runCommerceAgent} from '../automation/agent/executor.js';
 import {canRecover} from '../automation/agent/recovery.js';
+import {nativeRequestContract} from '../lib/order-contract.js';
 import {createSiteMemory} from '../automation/agent/memory.js';
 import {createEvidenceStore} from '../automation/logs/evidence.js';
 import {confirmationEvidence} from '../automation/adapters/generic-commerce.js';
@@ -21,7 +22,7 @@ const review=()=>({action:'review',reason:'Verified checkout',bindings:bindings(
 function sessionFixture(){
   const session={trace:[],receipt:null,submissionStarted:false,paymentStarted:false,observed:0,calls:[],methods:{}};
   session.methods={
-    observe:async()=>({observationId:'page-'+(++session.observed),url:order.url,title:'Checkout',text:'Product A USD 10',elements:[{ref:'e0',text:'Product A'},{ref:'e1',value:'1'}]}),
+    observe:async()=>({observationId:'page-'+(++session.observed),url:order.url,title:'Checkout',text:'Product A USD 10',elements:[{ref:'e0',tag:'button',role:'button',text:'Place order',visible:true},{ref:'e1',tag:'h1',text:'Product A',visible:true},{ref:'e2',tag:'input',role:'spinbutton',name:'quantity',value:'1',visible:true},{ref:'e3',tag:'span',text:'USD 10',visible:true},{ref:'e4',tag:'span',text:'USD',visible:true}]}),
     resolveSemantic:async value=>({selector:'runtime-'+value.ref,strategy:'aria'}),
     readSemantic:async value=>value.meaning==='product'?{text:'Product A'}:value.meaning==='quantity'?{value:'1'}:{value:'Monthly'},
     fill:async(...args)=>session.calls.push(['fill',...args]),
@@ -43,13 +44,13 @@ test('定位按 ARIA、文本、Label、Placeholder、Name、ID、CSS、XPath �
   const candidates=[],loc=(kind,count,marker)=>({count:async()=>{candidates.push(kind);return count;},getAttribute:async()=>marker,isVisible:async()=>true});
   const page={getByRole:()=>loc('aria',2),getByText:()=>loc('text',1,'stale:e0'),getByLabel:()=>loc('label',1,'now:e0'),locator:()=>loc('css',0)};
   const found=await resolveSemanticTarget(page,{observationId:'now',elements:[{ref:'e0',role:'button',accessibleName:'Buy',text:'Buy',label:'Buy',visible:true}]},target('purchase'));
-  assert.equal(found.strategy,'label');assert.deepEqual(candidates,['aria','text','label']);assert.deepEqual(found.attempts.map(attempt=>attempt.outcome),['ambiguous','different_observed_element','matched']);
+  assert.equal(found.strategy,'label');assert.deepEqual(candidates,['css','aria','text','label']);assert.deepEqual(found.attempts.map(attempt=>attempt.outcome),['ambiguous','different_observed_element','matched']);
 });
 test('每步重新观察，购物车必须核验商品和数量，不能凭点击宣称成功',async()=>{
   const session=sessionFixture(),steps=[{action:'cart',reason:'Enter cart',target:target('add_to_cart')},{action:'verify_cart',reason:'Check actual cart',bindings:{product:target('product'),quantity:target('quantity','e1')}},review()];
   const learned=[];const result=await runCommerceAgent(program(),order,session,{plan:async()=>steps.shift(),onLearn:async value=>learned.push(value)});
   assert.equal(result.status,'prepared');assert.equal(session.observed,3);assert.deepEqual(session.calls.map(call=>call[0]),['cart','submit']);assert.equal(learned[0].history[1].action,'verify_cart');
-  const failed=sessionFixture();await assert.rejects(runCommerceAgent(program(),order,failed,{autoRepair:false,plan:async()=>failed.calls.length?review():{action:'cart',reason:'Enter cart',target:target('add_to_cart')}}),{code:'AGENT_STEP_UNVERIFIED'});assert.equal(failed.calls.some(call=>call[0]==='submit'),false);
+  const failed=sessionFixture();failed.methods.readSemantic=async value=>value.meaning==='product'?{text:'Product A'}:{value:'2'};await assert.rejects(runCommerceAgent(program(),order,failed,{autoRepair:false,plan:async()=>failed.calls.length?review():{action:'cart',reason:'Enter cart',target:target('add_to_cart')}}),{code:'AGENT_STEP_UNVERIFIED'});assert.equal(failed.calls.some(call=>call[0]==='submit'),false);
 });
 test('商品规格不符时在提交前停止，选项和输入都验证实际值',async()=>{
   const session=sessionFixture(),value=program();value.workflow.requirements=[{name:'Cycle',value:'Yearly'}];
@@ -79,7 +80,7 @@ test('页面变化在同一浏览器采集证据并修复；认证错误和交�
   session.captureEvidence=async()=>({id:'evidence-id',image:'data:image/png;base64,AA=='});
   session.methods.resolveSemantic=async value=>{if(stale){stale=false;throw agentError('AGENT_ELEMENT_MISSING','DOM changed');}return {selector:value.ref,strategy:'text'};};
   await runCommerceAgent(program(),order,session,{plan:async args=>{attempts++;context=args;return review();}});
-  assert.equal(attempts,2);assert.equal(context.feedback.evidenceId,'evidence-id');assert.ok(context.image);assert.equal(session.calls.filter(c=>c[0]==='submit').length,1);
+  assert.equal(attempts,2);assert.equal(context.feedback.evidenceId,null);assert.equal(context.image,undefined);assert.equal(session.calls.filter(c=>c[0]==='submit').length,1);
   for(const state of [{submissionStarted:true,receipt:null},{paymentStarted:true},{submissionStarted:true,receipt:{status:'prepared'}}])assert.equal(canRecover(agentError('AGENT_ELEMENT_MISSING','missing'),state,{attempts:0}),false);
   assert.equal(canRecover(agentError('PROXY_AUTH_FAILED','auth'),session,{attempts:0}),false);
 });
@@ -124,18 +125,18 @@ test('订单成功必须同时具有成功提示与编号，失败和旧状态�
   assert.equal(confirmationEvidence(page(['Payment unsuccessful']),'payment'),null);
   assert.equal(confirmationEvidence(page(['Payment successful']),'payment').text,'Payment successful');
 });
-test('探索通过两次试跑才开放用户确认，动态执行仍绑定原任务审批哈希',async()=>{
+test('探索通过一次试跑后开放用户确认，动态执行仍绑定原任务审批哈希',async()=>{
   const task=validateOrderTask({...order,monitorId:'m',executionMode:'submit'}),user={id:'u',settings:{},monitors:[{id:'m',kind:'webpage'}],orderTasks:[task],orderAccounts:[{monitorId:'m',loginUrl:order.url,revision:1,status:'saved',session:{state:{cookies:[],origins:[]},check:{url:order.url}}}]};
   let submits=0,planning=0;
-  const service=createOrderService({persist:()=>{},requestAI:async(_user,messages)=>{if(messages[0].content.includes('仅返回 JSON {summary'))return {summary:'业务 SOP',workflow:{version:2,requirements:[]}};planning++;return review();},openBrowser:async(current,options)=>{
+  const service=createOrderService({persist:()=>{},requestAI:async(_user,messages)=>{if(messages[0].content===BUSINESS_PROMPT)return {summary:'业务 SOP',workflow:{version:2,requirements:[]}};planning++;return review();},openBrowser:async(current,options)=>{
     const session=sessionFixture();session.dryRun=!!current.dryRun;session.methods.submit=async()=>{
       if(!current.dryRun){await options.onBeforeSubmit({product:'Product A',quantity:1,total:10,currency:'USD'});submits++;session.submissionStarted=true;}
-      session.receipt={status:current.dryRun?'prepared':'ordered',review:{product:'Product A',quantity:1,total:10,currency:'USD'},confirmation:'Order confirmed',orderId:'ABC-7'};return session.receipt;
+      session.receipt={status:current.dryRun?'prepared':'ordered',review:{product:'Product A',quantity:1,total:10,currency:'USD'},confirmation:'Order confirmed',orderId:'ABC-7',requestContract:nativeRequestContract({nativeSubmit:true,url:order.url,method:'POST',encoding:'application/x-www-form-urlencoded',entries:[['quantity','1']]})};return session.receipt;
     };session.snapshot=session.methods.observe;session.close=async()=>{};return session;
   }});
-  await service.discover(user,task);assert.equal(task.program.workflow.version,2);assert.equal(task.trial.preflightPasses,2);assert.equal(submits,0);assert.equal(task.enabled,false);
+  await service.discover(user,task);assert.equal(task.program.workflow.version,2);assert.equal(task.trial.preflightPasses,1);assert.equal(submits,0);assert.equal(task.enabled,false);
   assert.throws(()=>service.approve(user,task,'wrong'));
-  service.approve(user,task,orderProgramHash(task));await service.execute(user,task);assert.equal(task.status,'ordered');assert.equal(submits,1);assert.equal(planning,3);assert.equal((await service.profile(user,task)).outcomes.ordered,1);
+  service.approve(user,task,orderProgramHash(task));await service.execute(user,task);assert.equal(task.status,'ordered');assert.equal(submits,1);assert.equal(planning,1);assert.equal((await service.profile(user,task)).outcomes.ordered,1);
   await assert.rejects(service.execute(user,task),/已经执行/);assert.equal(submits,1);
 });
 

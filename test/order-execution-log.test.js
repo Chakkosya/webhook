@@ -86,3 +86,24 @@ test('页面诊断和 AI 请求日志明确保留截断标志及完整语义元�
   assert.ok(!JSON.stringify(summary).includes('private'));
  }
 });
+
+
+test('连续试跑和执行各自开启新日志，旧轮次和其他监控事件不会叠加',()=>{
+  const user=fixture(),store=createOrderExecutionLogs();
+  const old=store.start(user,'m',{kind:'generate',task:user.orderTasks[0]});old.event('上一轮失败');old.finish('failed');
+  const firstId=old.record.id;
+  const current=store.start(user,'m',{kind:'generate',task:user.orderTasks[0]});
+  let report=store.report(user,'m');
+  assert.equal(report.operations.length,1);assert.notEqual(report.operations[0].id,firstId);
+  assert.equal(report.operations[0].status,'running');assert.equal(report.operations[0].events.length,1);assert.equal(report.operations[0].events[0].sequence,1);
+  old.event('上一轮迟到事件');current.event('本轮通过');current.finish('passed');
+  const other=store.start(user,'other',{kind:'execute'});other.event('其他监控事件');
+  report=store.report(user,'m');assert.equal(report.operations[0].id,current.record.id);
+  assert.ok(!JSON.stringify(report).includes('上一轮'));assert.ok(!JSON.stringify(report).includes('其他监控事件'));
+  const execution=store.start(user,'m',{kind:'execute',task:user.orderTasks[0]});
+  report=store.report(user,'m');assert.equal(report.operations.length,1);assert.equal(report.operations[0].id,execution.record.id);assert.equal(report.operations[0].events[0].sequence,1);
+  assert.ok(!JSON.stringify(report).includes('本轮通过'));assert.equal(user.orderExecutionLogs.length,4);
+  for(const value of [report.exportedAt,report.operations[0].startedAt,report.operations[0].events[0].at])assert.match(value,/\+08:00$/);
+  const restored=JSON.parse(JSON.stringify(user));store.recover([restored]);
+  const resumed=store.report(restored,'m');assert.equal(resumed.operations.length,1);assert.equal(resumed.operations[0].id,execution.record.id);assert.equal(resumed.operations[0].status,'interrupted');
+});

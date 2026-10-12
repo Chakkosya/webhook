@@ -3,6 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 const {chromium}=await import('playwright-core');
+const {nativeRequestContract}=await import(pathToFileURL(path.join(process.cwd(),'lib/order-contract.js')));
 const {createOrderBrowser}=await import(pathToFileURL(path.join(process.cwd(),'lib/order-browser.js')));
 process.env.MONITOR_BROWSER_EXECUTABLE||=process.platform==='win32'?'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe':'/usr/bin/chromium';
 const requests=[],failures=[];let callbackVisits=0,browser;
@@ -13,7 +14,7 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname==='/authenticate'){res.writeHead(303,{'set-cookie':'session=audit-valid; HttpOnly; Path=/','location':'/account'});res.end();return;}
  if(url.pathname==='/callback'){callbackVisits++;if(callbackVisits===1){res.writeHead(303,{location:'/account'});res.end();}else res.end(login);return;}
  if(url.pathname==='/account'){res.end((req.headers.cookie||'').includes('session=audit-valid')?'<h1>Account</h1><a href="/logout">Log out</a>':login);return;}
- if(url.pathname==='/cart-config'){res.end('<form action="/wrong" method="get"><input name="quantity" value="1"><button id="cart" formaction="/cart-actual" formmethod="post">Continue</button></form>');return;}
+ if(url.pathname==='/cart-config'){res.end('<form action="/wrong" method="get"><h1>Product A</h1><input name="quantity" value="1"><button id="cart" formaction="/cart-actual" formmethod="post">Continue</button></form>');return;}
  if(url.pathname==='/cart-actual'){res.writeHead(303,{location:'/product?override=1'});res.end();return;}
  if(url.pathname==='/product'){
   const override=url.searchParams.has('override'),stale=url.searchParams.has('stale'),mutate=url.searchParams.has('mutate'),cross=url.searchParams.has('cross'),get=url.searchParams.has('get');
@@ -31,7 +32,7 @@ const server=http.createServer(async(req,res)=>{
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
 const checkout={submitSelector:'#submit',productSelector:'#product',quantitySelector:'#quantity',totalSelector:'#total',currencySelector:'#currency',confirmationSelector:'#confirmation'};
-const task=(suffix='')=>({url:base+'/product'+suffix,product:'Product A',quantity:1,maxTotal:10,currency:'USD',executionMode:'pay',program:{checkout}});
+const task=(suffix='')=>({url:base+'/product'+suffix,product:'Product A',quantity:1,maxTotal:10,currency:'USD',executionMode:'pay',program:{checkout},submissionContract:nativeRequestContract({nativeSubmit:true,url:base+'/create'+(suffix.includes('http500')?'?http500=1':suffix.includes('redirect500')?'?redirect500=1':''),method:'POST',encoding:'application/x-www-form-urlencoded',entries:[['quantity','1']]})});
 const run=async(name,fn)=>{try{await fn();console.log('PASS '+name);}catch(error){failures.push(name+': '+error.message);console.error('FAIL '+name+': '+error.message);}finally{if(browser)await browser.close();browser=null;}};
 try{
  await run('genuine login form with a nested checkout return URL saves in a fresh browser',async()=>{
@@ -44,7 +45,7 @@ try{
  });
  await run('cart, order and payment honor the clicked button form overrides with one POST each',async()=>{
   const before=requests.length;let submits=0,pays=0;browser=await createOrderBrowser({...task('?override=1'),url:base+'/cart-config'},{onBeforeSubmit:async()=>submits++,onBeforePayment:async()=>pays++});
-  await browser.methods.cart('#cart');assert.equal((await browser.methods.submit()).status,'ordered');const paid=await browser.methods.pay({paySelector:'#pay',invoiceSelector:'#invoice',totalSelector:'#invoice-total',currencySelector:'#invoice-currency',balanceSelector:'#balance',balanceCurrencySelector:'#balance-currency',confirmationSelector:'#paid'});assert.equal(paid.status,'paid');assert.equal(submits,1);assert.equal(pays,1);
+  await browser.methods.fill('[name=quantity]','1');await browser.methods.cart('#cart');assert.equal((await browser.methods.submit()).status,'ordered');const paid=await browser.methods.pay({paySelector:'#pay',invoiceSelector:'#invoice',totalSelector:'#invoice-total',currencySelector:'#invoice-currency',balanceSelector:'#balance',balanceCurrencySelector:'#balance-currency',confirmationSelector:'#paid'});assert.equal(paid.status,'paid');assert.equal(submits,1);assert.equal(pays,1);
   for(const route of ['/cart-actual','/create','/pay-actual'])assert.equal(requests.slice(before).filter(request=>request.path===route&&request.method==='POST').length,1);assert.ok(!requests.slice(before).some(request=>request.path==='/wrong'));
  });
  await run('a pre-existing order confirmation cannot prove success or consume the submit ledger',async()=>{
@@ -60,7 +61,7 @@ try{
   let submits=0;const before=requests.length;browser=await createOrderBrowser(task(suffix),{onBeforeSubmit:async()=>submits++});await assert.rejects(browser.methods.submit());assert.equal(submits,0);assert.ok(!requests.slice(before).some(request=>request.path==='/create'));
  });
  await run('on-click quantity mutation is blocked before it reaches the merchant',async()=>{
-  const before=requests.length;browser=await createOrderBrowser(task('?mutate=1'));await assert.rejects(browser.methods.submit(),error=>error.code==='ORDER_REQUEST_BLOCKED'&&/数量/.test(error.message));assert.ok(!requests.slice(before).some(request=>request.path==='/create'));
+  const before=requests.length;browser=await createOrderBrowser(task('?mutate=1'));await assert.rejects(browser.methods.submit(),error=>error.code==='ORDER_CONTRACT_UNVERIFIED'&&/字段或值/.test(error.message));assert.ok(!requests.slice(before).some(request=>request.path==='/create'));
  });
  await run('stalled browser state reads are bounded and close the owned browser',async()=>{
   const launch=async options=>{const instance=await chromium.launch(options),newContext=instance.newContext.bind(instance);instance.newContext=async args=>{const context=await newContext(args);context.storageState=()=>new Promise(()=>{});return context;};return instance;};

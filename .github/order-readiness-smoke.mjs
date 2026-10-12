@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
+const {nativeRequestContract}=await import(pathToFileURL(path.join(process.cwd(),'lib/order-contract.js')));
 const {createOrderBrowser}=await import(pathToFileURL(path.join(process.cwd(),'lib/order-browser.js')));
 const {createOrderService,validateOrderTask,orderProgramHash}=await import(pathToFileURL(path.join(process.cwd(),'lib/orders.js')));
-process.env.MONITOR_BROWSER_EXECUTABLE||='/usr/bin/chromium';
+process.env.MONITOR_BROWSER_EXECUTABLE||=process.platform==='win32'?'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe':'/usr/bin/chromium';
 let orders=0,profilePosts=0,identity='Account 42',rotatingSession='valid';
 const checkout={submitSelector:'#submit',productSelector:'#product',quantitySelector:'#quantity',totalSelector:'#total',currencySelector:'#currency',confirmationSelector:'#confirmation'};
 const product='<form id="checkout" action="/create" method="post"><h1 id="product">Product A</h1><input id="quantity" name="quantity" value="1"><p id="total">USD 10.00</p><p id="currency">USD</p><button id="submit">Submit Order</button></form>';
@@ -48,8 +49,8 @@ try{
   const saved=await browser.remote.finish();assert.equal(saved.check.url,base+'/account');assert.equal(profilePosts,1);
  });
  await run('blocked navigation keeps rotating login cookies and prior session storage without repeating the order',async()=>{
-  browser=await createOrderBrowser({url:base+'/rotating',product:'Product A',quantity:1,maxTotal:10,currency:'USD',executionMode:'submit',program:{checkout}},{storageState:state,sessionStorageState:{prior:'keep'},loginCheck:{url:base+'/rotating'}});
-  await assert.rejects(browser.methods.submit(),e=>e.code==='ORDER_REQUEST_BLOCKED');
+  browser=await createOrderBrowser({url:base+'/rotating',product:'Product A',quantity:1,maxTotal:10,currency:'USD',executionMode:'submit',program:{checkout},submissionContract:nativeRequestContract({nativeSubmit:true,url:base+'/create',method:'POST',encoding:'application/x-www-form-urlencoded',entries:[['quantity','1']]})},{storageState:state,sessionStorageState:{prior:'keep'},loginCheck:{url:base+'/rotating'}});
+  await assert.rejects(browser.methods.submit(),e=>e.code==='ORDER_CONTRACT_UNVERIFIED');
   // Allow the aborted navigation to reach Chromium's opaque error document.
   await new Promise(resolve=>setTimeout(resolve,250));
   const saved=await browser.accountState();assert.equal(saved.state.cookies.find(c=>c.name==='session').value,rotatingSession);assert.equal(saved.sessionStorage.prior,'keep');assert.equal(orders,0);
@@ -73,9 +74,9 @@ try{
  });
  await run('bad payment syntax never reaches real browser trials or merchant submission',async()=>{
   const user={id:'readiness-user',settings:{},monitors:[{id:'m',kind:'webpage',url:base+'/product'}],orderAccounts:[{monitorId:'m',loginUrl:base+'/account',revision:1,status:'saved',session:{state,check:{url:base+'/account'}}}],orderTasks:[]};
-  const task=validateOrderTask({monitorId:'m',url:base+'/product',product:'Product A',currency:'USD',quantity:1,maxTotal:10,executionMode:'pay'});user.orderTasks.push(task);
+  const task=validateOrderTask({monitorId:'m',instruction:'核对购买要求',url:base+'/product',product:'Product A',currency:'USD',quantity:1,maxTotal:10,executionMode:'pay'});user.orderTasks.push(task);
   const service=createOrderService({persist:()=>{},requestAI:async()=>({summary:'Invalid syntax fixture',checkout,workflow:{version:1,prepareCode:'function(){return {ready:true};}',paymentCode:'function(){ return {checks: ; }'}})});
-  await assert.rejects(service.generate(user,task),e=>e.code==='ORDER_SCRIPT_INVALID');assert.equal(task.trial,null);assert.equal(task.enabled,false);assert.equal(orders,0);assert.throws(()=>service.approve(user,task,orderProgramHash(task)));
+  await assert.rejects(service.generate(user,task),e=>e.code==='ORDER_BUSINESS_PLAN_INVALID');assert.equal(task.trial,null);assert.equal(task.enabled,false);assert.equal(orders,0);assert.throws(()=>service.approve(user,task,orderProgramHash(task)));
  });
  console.log('Order readiness regressions passed without real merchant requests.');
 }finally{if(browser)await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}

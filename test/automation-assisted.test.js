@@ -1,14 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createAssistedPlanner,planningObservation} from '../automation/agent/local-planner.js';
-import {createPlanner} from '../automation/agent/planner.js';
+import {createPlanner,BUSINESS_PROMPT} from '../automation/agent/planner.js';
+import {nativeRequestContract} from '../lib/order-contract.js';
 import {runCommerceAgent} from '../automation/agent/executor.js';
 import {createOrderService,validateOrderTask,validateOrderProgram,orderProgramHash} from '../lib/orders.js';
 
 const order={url:'https://shop.example/checkout',product:'Product A',quantity:1,maxTotal:20,currency:'USD',executionMode:'submit'};
 const program=()=>validateOrderProgram({summary:'Purchase monthly',workflow:{version:2,requirements:[{name:'Cycle',value:'Monthly'}]}});
-function fixture({unknown=false,dryRun=true,rejectFill=false,expectedQuantity=1,monthlyCode='m',total=10,decorate=page=>page}={}){
-  let quantity='0',cycle='y',epoch=0,current;
+function fixture({unknown=false,dryRun=true,rejectFill=false,expectedQuantity=1,monthlyCode='m',total=10,initialQuantity='0',initialCycle='y',decorate=page=>page}={}){
+  let quantity=initialQuantity,cycle=initialCycle,epoch=0,current;
   const session={dryRun,trace:[],receipt:null,submissionStarted:false,paymentStarted:false,calls:[]};
   session.methods={
     observe:async()=>{
@@ -30,14 +31,16 @@ function fixture({unknown=false,dryRun=true,rejectFill=false,expectedQuantity=1,
     submit:async()=>{
       assert.equal(quantity,String(expectedQuantity));assert.equal(cycle,monthlyCode);
       session.calls.push('review');if(!dryRun)session.submissionStarted=true;
-      session.receipt={status:dryRun?'prepared':'ordered',review:{product:'Product A',quantity:expectedQuantity,total,currency:'USD',configuration:[{name:'Cycle',value:'Monthly'}]}};
+      session.receipt={status:dryRun?'prepared':'ordered',review:{product:'Product A',quantity:expectedQuantity,total,currency:'USD',configuration:[{name:'Cycle',value:'Monthly'}]},requestContract:nativeRequestContract({nativeSubmit:true,url:order.url,method:'POST',encoding:'application/x-www-form-urlencoded',entries:[['quantity',String(expectedQuantity)],['billingcycle',monthlyCode]]})};
       return session.receipt;
     }
   };
   session.snapshot=session.methods.observe;session.close=async()=>{};return session;
 }
 function batch(page){
-  const t=(meaning,el)=>({meaning,ref:el.ref,confidence:0.95}),el=index=>page.elements[index];
+  const t=(meaning,el)=>({meaning,ref:el.ref,confidence:0.95});
+  const predicates=[el=>['h1','h2'].includes(el.tag),el=>el.role==='spinbutton',el=>el.tag==='select',el=>el.id==='total',el=>el.tag==='span'&&(el.text||el.accessibleName)==='USD',el=>el.role==='button'];
+  const el=index=>page.elements.find(predicates[index]);
   return {steps:[
     {action:'fill',reason:'Set authorized quantity',target:t('quantity',el(1)),value:'1'},
     {action:'select',reason:'Select monthly billing',target:t('billing_cycle',el(2)),value:'m'},
@@ -50,7 +53,7 @@ function serviceFixture({ambiguous=false}={}){
   let business=0,assistance=0,opened=0,submitted=0;const sessions=[];
   const service=createOrderService({persist:()=>{},
     requestAI:async(_user,messages)=>{
-      if(messages[0].content.includes('仅返回 JSON {summary')){business++;return program();}
+      if(messages[0].content===BUSINESS_PROMPT){business++;return program();}
       assistance++;
       const content=typeof messages[1].content==='string'?messages[1].content:messages[1].content[0].text;
       const page=JSON.parse(content).page;
@@ -87,19 +90,19 @@ test('one unknown-page AI explanation drives multiple code actions and is reused
   await runCommerceAgent(program(),order,second,{plan:createAssistedPlanner(async()=>{throw new Error('must reuse discovered flow');},{recipes})});
   assert.deepEqual(second.calls,['fill','select','review']);assert.equal(calls,1);
 });
-test('two preflights and the approved execution reuse the compiled flow without more AI calls',async()=>{
+test('one preflight and the approved execution reuse the compiled flow without more AI calls',async()=>{
   const f=serviceFixture();await f.service.generate(f.user,f.task);
-  assert.equal(f.business,1);assert.equal(f.assistance,1);assert.equal(f.task.trial.preflightPasses,2);assert.equal(f.task.program.runtimePlan.length,3);assert.equal(f.submitted,0);
+  assert.equal(f.business,1);assert.equal(f.assistance,1);assert.equal(f.task.trial.preflightPasses,1);assert.equal(f.task.program.runtimePlan.length,3);assert.equal(f.submitted,0);
   const approved=orderProgramHash(f.task),compiled=JSON.stringify(f.task.program.runtimePlan);
   f.service.approve(f.user,f.task,approved);await f.service.execute(f.user,f.task);
   assert.equal(f.task.status,'ordered');assert.equal(f.assistance,1);assert.equal(f.submitted,1);assert.equal(orderProgramHash(f.task),approved);assert.equal(JSON.stringify(f.task.program.runtimePlan),compiled);
-  assert.deepEqual(f.sessions.slice(1).map(session=>session.calls),Array.from({length:3},()=>['fill','select','review']));
+  assert.deepEqual(f.sessions.map(session=>session.calls),Array.from({length:2},()=>['fill','select','review']));
   await assert.rejects(f.service.execute(f.user,f.task),/已经执行/);assert.equal(f.submitted,1);
 });
 test('uncertain AI evidence becomes an explicit question instead of regenerating the whole workflow',async()=>{
   const f=serviceFixture({ambiguous:true});
   await assert.rejects(f.service.generate(f.user,f.task),{code:'AGENT_NEEDS_INPUT'});
-  assert.equal(f.business,1);assert.equal(f.assistance,2);assert.equal(f.opened,2);assert.equal(f.submitted,0);
+  assert.equal(f.business,1);assert.equal(f.assistance,2);assert.equal(f.opened,1);assert.equal(f.submitted,0);
   assert.equal(f.task.failure.category,'needs_input');assert.equal(f.task.failure.orderRequestSent,'no');assert.ok(f.task.input.candidates.some(item=>item.label==='Units'));assert.ok(f.task.input.question);
   assert.equal(f.task.trial,null);assert.equal(f.task.enabled,false);
 });
@@ -113,9 +116,9 @@ test('a failed mapped action asks AI to repair only the current obstacle',async(
 });
 test('semantic compression preserves late controls and hidden invoice metadata',()=>{
   const page={url:order.url,html:'huge',domTree:[{}],elements:Array.from({length:1400},(_,i)=>({ref:'e'+i,tag:'span',text:'text '+i,visible:true}))};
-  page.elements.push({ref:'e1400',tag:'button',role:'button',text:'Place order',visible:true},{ref:'e1401',tag:'input',type:'hidden',name:'invoiceid',visible:false});
-  const compact=planningObservation(page);
-  assert.equal(compact.elements.length,1402);assert.equal(compact.elements.at(-1).name,'invoiceid');assert.equal(compact.html,undefined);assert.equal(compact.domTree,undefined);
+  page.elements.push({ref:'e1400',tag:'button',role:'button',text:'Pay invoice',formRef:'eform',visible:true},{ref:'e1401',tag:'input',type:'hidden',name:'invoiceid',value:'private-invoice-id',formRef:'eform',visible:false});
+  const compact=planningObservation(page,{context:{submissionStarted:true}});
+  assert.ok(compact.elements.length<=96);assert.ok(compact.elements.some(el=>el.ref==='e1400'));assert.ok(compact.elements.some(el=>el.name==='invoiceid'));assert.equal(compact.coverage.complete,false);assert.ok(compact.coverage.omitted>0);assert.equal(compact.html,undefined);assert.equal(compact.domTree,undefined);assert.doesNotMatch(JSON.stringify(compact),/private-invoice-id/);
 });
 test('ambiguous current controls invalidate learned actions rather than choosing the first match',async()=>{
   const recipes=[];
@@ -151,11 +154,11 @@ test('the same business template works with arbitrary merchant labels',async()=>
   }
   assert.equal(calls,1);
 });
-test('layout, title, incidental query, field names, amounts and option values may change without replanning',async()=>{
+test('layout, title, tracking query, field names, amounts and option values may change without replanning',async()=>{
   const recipes=[];
   await runCommerceAgent(program(),order,fixture({unknown:true}),{plan:createAssistedPlanner(async input=>batch(input.observation),{recipes})});
   const session=fixture({unknown:true,monthlyCode:'option-current-983',total:12,decorate:page=>{
-    page.title='Updated page';page.url+='?view=redesigned&visit=new';
+    page.title='Updated page';page.url+='?utm_source=redesigned&utm_campaign=new';
     page.elements[1].name='generated-field-91';page.elements[2].name='generated-field-92';
     page.elements[0].tag='h2';page.elements[3].tag='div';
     page.elements.unshift({ref:'e9000',role:'link',tag:'a',text:'New help link',accessibleName:'New help link',visible:true,href:'/help'});
@@ -215,4 +218,28 @@ test('a clarification inside coupon verification remains an explicit question',a
   };
   await assert.rejects(runCommerceAgent(program(),{...order,couponCode:'SAVE'},session,{plan}),error=>error.code==='AGENT_NEEDS_INPUT'&&error.orderInput.reason.includes('两个优惠结果'));
   assert.equal(plans,2);assert.equal(session.receipt,null);
+});
+
+
+test('AI batches and learned flows register satisfied defaults without rewriting or observing again',async()=>{
+  const recipes=[];let assisted=0;
+  for(let pass=0;pass<2;pass++){
+    const browser=fixture({initialQuantity:'1',initialCycle:'m'}),registered=[];
+    const result=await runCommerceAgent(program(),order,browser,{plan:createAssistedPlanner(async input=>{
+      assisted++;assert.equal(pass,0);return batch(input.observation);
+    },{recipes,onSatisfied:async step=>registered.push(step.action)})});
+    assert.equal(result.status,'prepared');assert.deepEqual(browser.calls,['review']);
+    assert.deepEqual(registered,['fill','select']);assert.equal((await browser.methods.observe()).observationId,'page-1');
+  }
+  assert.equal(assisted,1);assert.equal(recipes.length,3);
+});
+
+test('business query changes still require a current binding even with identical controls',async()=>{
+  const recipes=[],base={order,workflow:program().workflow,history:[],context:{couponApplied:true}};
+  const observation={url:order.url+'?pid=A&utm_source=old',elements:[{ref:'e0',tag:'button',role:'button',text:'Continue',visible:true}]};
+  const first=createAssistedPlanner(async()=>({action:'click',reason:'Continue this product',target:{meaning:'continue',ref:'e0',confidence:0.95}}),{recipes});
+  await first({...base,observation});first.remember();let calls=0;
+  const next=createAssistedPlanner(async()=>{calls++;return {action:'stop',reason:'Different product route needs confirmation'};},{recipes});
+  const result=await next({...base,observation:{...observation,url:order.url+'?pid=B&utm_source=new'}});
+  assert.equal(result.action,'stop');assert.equal(calls,1);
 });

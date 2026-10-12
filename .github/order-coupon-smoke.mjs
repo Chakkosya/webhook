@@ -3,6 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 const root=process.cwd();
+const {nativeRequestContract}=await import(pathToFileURL(path.join(root,'lib/order-contract.js')));
 const {createOrderBrowser}=await import(pathToFileURL(path.join(root,'lib/order-browser.js')));
 const {createOrderService,validateOrderTask,validateOrderProgram,orderProgramHash}=await import(pathToFileURL(path.join(root,'lib/orders.js')));
 const {runOrderWorkflow}=await import(pathToFileURL(path.join(root,'lib/order-workflow.js')));
@@ -12,6 +13,16 @@ const coupon={inputSelector:'#promo',applySelector:'#apply',appliedCodeSelector:
 const paymentChecks={paySelector:'#pay',invoiceSelector:'#invoice',totalSelector:'#invoice-total',currencySelector:'#invoice-currency',balanceSelector:'#balance',balanceCurrencySelector:'#balance-currency',confirmationSelector:'#paid'};
 const generated={summary:'应用并核验优惠码后按真实总价提交、付款一次',checkout,coupon,workflow:{version:1,prepareCode:'function(o,b){b.goto(o.url);return {ready:true};}',paymentCode:'function(){return {checks:'+JSON.stringify(paymentChecks)+'};}'}};
 const program=validateOrderProgram(generated,{requireWorkflow:true});
+const semanticPlan=messages=>{
+ const {page,context,order}=JSON.parse(messages[1].content);
+ const bind=(meaning,id)=>{const el=page.elements.find(el=>el.id===id);assert.ok(el,'Current field '+id);return {meaning:meaning.replace(/[A-Z]/g,c=>'_'+c.toLowerCase()).replace(/-/g,'_'),ref:el.ref,confidence:0.95};};
+ const checks=context.submissionStarted?{}:Object.fromEntries(['submit','product','quantity','total','currency'].map(key=>[key,bind(key,key)]));
+ const proof=()=>({input:bind('coupon_input','promo'),apply:bind('apply_coupon','apply'),appliedCode:bind('applied_code','applied'),discount:bind('discount','discount')});
+ if(context.submissionStarted)return {action:'pay',reason:'Pay the original invoice',bindings:Object.fromEntries(Object.entries({pay:'pay',invoice:'invoice',total:'invoice-total',currency:'invoice-currency',balance:'balance',balanceCurrency:'balance-currency'}).map(([key,id])=>[key,bind(key,id)]))};
+ if(context.pendingVerification==='coupon')return {action:'verify_coupon',reason:'Read the coupon response',bindings:{...checks,...proof()}};
+ if(order.couponCode&&!context.couponApplied)return {action:'apply_coupon',reason:'Apply authorized coupon once',bindings:{...checks,...proof()}};
+ return {action:'review',reason:'Review current discounted or approved full-price checkout',bindings:{...checks,...(order.couponCode?proof():{})}};
+};
 const carts=new Map(),requests=[],failures=[];let sequence=0,browser,base;
 const escape=value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 function product(id,cart){
@@ -22,8 +33,8 @@ function product(id,cart){
  const ajax=cart.scenario==='ajax',ajaxClick=ajax?'onclick="event.preventDefault();fetch(this.form.action,{method:\'POST\',headers:{\'content-type\':\'application/json\'},body:JSON.stringify({promocode:document.getElementById(\'promo\').value})}).then(r=>r.json()).then(data=>setTimeout(()=>{document.getElementById(\'applied\').textContent=data.code;document.getElementById(\'applied\').style.display=\'block\';document.getElementById(\'discount\').textContent=\'USD -\'+data.discount;document.getElementById(\'discount\').style.display=\'block\';document.getElementById(\'total\').textContent=\'USD \'+data.total;},250))"':mutate;
  const apply='<button id="apply" '+(ajax?'type="button"':'type="submit"')+' formaction="'+target+'" '+ajaxClick+'>Apply coupon</button>';
  const editProof=cart.scenario==='editable'&&cart.code;
- const proof=editProof?'<input id="applied" value="'+escape(cart.code)+'">':'<span id="applied" '+(!cart.code&&!cart.failed?'style="display:none"':'')+'>'+escape(cart.failed?'Invalid coupon '+cart.failed:cart.code||'')+'</span>';
- const discount='<span id="discount" '+(!cart.code&&!cart.failed?'style="display:none"':'')+'>'+ (cart.scenario==='percent'?'20%':(cart.scenario==='mixed-discount'?'20% coupon discount: ':'')+'USD -'+cart.discount.toFixed(2))+'</span>';
+ const proof=editProof?'<input id="applied" value="'+escape(cart.code)+'">':'<span id="applied" '+(!cart.semantic&&!cart.code&&!cart.failed?'style="display:none"':'')+'>'+escape(cart.failed?'Invalid coupon '+cart.failed:cart.code||(cart.semantic?'Not applied':''))+'</span>';
+ const discount='<span id="discount" '+(!cart.semantic&&!cart.code&&!cart.failed?'style="display:none"':'')+'>'+ (cart.scenario==='percent'?'20%':(cart.scenario==='mixed-discount'?'20% coupon discount: ':'')+'USD -'+cart.discount.toFixed(2))+'</span>';
  const totals='<h1 id="product">Product A</h1><span id="total">USD '+cart.total.toFixed(2)+'</span><span id="currency">USD</span>';
  const submit='<button id="submit" '+(shared?'onclick="document.getElementById(\'promo\').value=\'OTHER\'"':'')+'>Submit order</button>';
  const gateway=cart.scenario==='website-payment'?'<select id="gateway" name="paymentmethod"><option value="card">Credit Card</option><option value="alipay">Alipay</option></select>':'';
@@ -70,7 +81,7 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));base='http://12
 const storageState={cookies:[{name:'merchant_session',value:'coupon-buyer',domain:'127.0.0.1',path:'/',expires:-1,httpOnly:true,secure:false,sameSite:'Lax'}],origins:[]};
 function fixture(scenario='normal',code='SAVE20',mode='pay'){
  const id=String(++sequence),cart={scenario,requested:code,code:'',total:20,discount:0,applies:0,orders:0,payments:0,replays:0};carts.set(id,cart);
- const task=validateOrderTask({label:'优惠码验证',url:base+'/product?cart='+id,product:'Product A',quantity:1,maxTotal:code?15:25,currency:'USD',couponCode:code,executionMode:mode,monitorId:'monitor-'+id});task.program=program;
+ const task=validateOrderTask({label:'优惠码验证',url:base+'/product?cart='+id,product:'Product A',quantity:1,maxTotal:code?15:25,currency:'USD',couponCode:code,executionMode:mode,monitorId:'monitor-'+id});task.program=program;task.submissionContract=nativeRequestContract({nativeSubmit:true,url:base+'/create?cart='+id,method:'POST',encoding:'application/x-www-form-urlencoded',entries:[['quantity','1'],...(scenario==='website-payment'?[['paymentmethod','alipay']]:[]),...(scenario==='submit-mutation'?[['promocode',code]]:[])]});
  return {id,cart,task,open:async()=>browser=await createOrderBrowser(task,{storageState,couponVerificationTimeoutMs:1000})};
 }
 async function run(label,fn){try{await fn();console.log('PASS '+label);}catch(error){failures.push(label+': '+error.stack);console.error('FAIL '+label+': '+error.message);}finally{if(browser){await browser.close();browser=null;}}}
@@ -79,11 +90,11 @@ try{
   const f=fixture('normal','','prepare');await f.open();const result=await runOrderWorkflow(program,f.task,browser.methods);assert.equal(result.review.total,20);assert.equal(result.review.coupon,undefined);assert.equal(f.cart.applies,0);assert.equal(f.cart.orders,0);
  });
  await run('two service trials then one trigger reuse the accepted coupon without stacking or duplicate orders/payments',async()=>{
-  const f=fixture(),user={id:'coupon-user',monitors:[{id:f.task.monitorId,kind:'webpage'}],orderTasks:[f.task],orderAccounts:[{monitorId:f.task.monitorId,loginUrl:f.task.url,revision:1,status:'saved',session:{state:storageState,check:{url:f.task.url}}}]};let ai=0,writes=0;
+  const f=fixture();f.cart.semantic=true;const user={id:'coupon-user',monitors:[{id:f.task.monitorId,kind:'webpage'}],orderTasks:[f.task],orderAccounts:[{monitorId:f.task.monitorId,loginUrl:f.task.url,revision:1,status:'saved',session:{state:storageState,check:{url:f.task.url}}}]};let ai=0,writes=0;
   f.cart.guard=phase=>assert.ok(phase==='submit'?f.task.submissionStartedAt:f.task.paymentStartedAt,'Transaction ledger exists before merchant action');
-  const service=createOrderService({persist:()=>writes++,requestAI:async(_user,messages)=>{ai++;assert.equal(JSON.parse(messages[1].content).order.couponCode,'SAVE20');return generated;}});
-  await service.generate(user,f.task);assert.equal(ai,1);assert.equal(f.cart.applies,1);assert.equal(f.cart.orders,0);assert.equal(f.task.trial.review.total,15);assert.deepEqual(f.task.trial.review.coupon,{code:'SAVE20',discount:5});
-  service.approve(user,f.task,orderProgramHash(f.task));await service.trigger(user,user.monitors[0]);await service.trigger(user,user.monitors[0]);assert.equal(f.task.status,'paid');assert.equal(f.task.result.payment.total,15);assert.equal(f.cart.orders,1);assert.equal(f.cart.payments,1);assert.equal(f.cart.applies,1);assert.ok(writes>0);
+  const service=createOrderService({persist:()=>writes++,requestAI:async(_user,messages)=>{ai++;assert.equal(JSON.parse(messages[1].content).order.couponCode,'SAVE20');return semanticPlan(messages);}});
+  await service.generate(user,f.task);assert.equal(ai,3);assert.equal(f.cart.applies,1);assert.equal(f.cart.orders,0);assert.equal(f.task.trial.review.total,15);assert.deepEqual(f.task.trial.review.coupon,{code:'SAVE20',discount:5});
+  service.approve(user,f.task,orderProgramHash(f.task));await service.trigger(user,user.monitors[0]);await service.trigger(user,user.monitors[0]);assert.equal(f.task.status,'paid',f.task.error);assert.equal(f.task.result.payment.total,15);assert.equal(f.cart.orders,1);assert.equal(f.cart.payments,1);assert.equal(f.cart.applies,1);assert.ok(writes>0);
  });
  for(const [scenario,code]of [['override','Save-20'],['ajax','SAVE+20'],['normal','省钱-20'],['mixed-discount','SAVE20']])await run(scenario+' application validates the actual code, canonical case and reduced payable total',async()=>{
   const f=fixture(scenario,code);await f.open();const result=await runOrderWorkflow(program,f.task,browser.methods);assert.equal(result.status,'paid');assert.equal(result.review.total,15);assert.equal(result.payment.total,15);assert.equal(f.cart.applies,1);assert.equal(f.cart.orders,1);assert.equal(f.cart.payments,1);
@@ -98,9 +109,9 @@ try{
   const result=await runOrderWorkflow(program,f.task,browser.methods);assert.equal(result.status,'paid');assert.deepEqual(result.review.coupon,{code:'SAVE10',discount:2});assert.equal(result.payment.total,18);assert.equal(f.cart.applies,1);assert.equal(f.cart.orders,1);assert.equal(f.cart.payments,1);
  });
  await run('invalid coupon stops generation after one AI response and one coupon request, with no orders or payments',async()=>{
-  const f=fixture('normal','INVALID'),user={id:'invalid-user',monitors:[{id:f.task.monitorId,kind:'webpage'}],orderTasks:[f.task],orderAccounts:[{monitorId:f.task.monitorId,loginUrl:f.task.url,revision:1,status:'saved',session:{state:storageState,check:{url:f.task.url}}}]};let ai=0;
-  const service=createOrderService({persist:()=>{},requestAI:async()=>{ai++;return generated;},openBrowser:(task,options)=>createOrderBrowser(task,{...options,couponVerificationTimeoutMs:1000})});
-  await assert.rejects(service.generate(user,f.task),error=>error.code==='ORDER_COUPON_REJECTED');assert.equal(ai,1);assert.equal(f.cart.applies,1);assert.equal(f.cart.orders,0);assert.equal(f.cart.payments,0);assert.equal(user.orderAccounts[0].status,'saved');
+  const f=fixture('normal','INVALID');f.cart.semantic=true;const user={id:'invalid-user',monitors:[{id:f.task.monitorId,kind:'webpage'}],orderTasks:[f.task],orderAccounts:[{monitorId:f.task.monitorId,loginUrl:f.task.url,revision:1,status:'saved',session:{state:storageState,check:{url:f.task.url}}}]};let ai=0;
+  const service=createOrderService({persist:()=>{},requestAI:async(_user,messages)=>{ai++;return semanticPlan(messages);},openBrowser:(task,options)=>createOrderBrowser(task,{...options,couponVerificationTimeoutMs:1000})});
+  await assert.rejects(service.generate(user,f.task),error=>error.code==='ORDER_COUPON_REJECTED');assert.equal(ai,2);assert.equal(f.cart.applies,1);assert.equal(f.cart.orders,0);assert.equal(f.cart.payments,0);assert.equal(user.orderAccounts[0].status,'saved');
  });
  for(const scenario of ['mutation','duplicate','financial','disguised','autopay'])await run(scenario+' coupon request is rejected before reaching the merchant',async()=>{
   const f=fixture(scenario);await f.open();await assert.rejects(runOrderWorkflow(program,f.task,browser.methods));assert.equal(f.cart.applies,0);assert.equal(f.cart.orders,0);assert.equal(f.cart.payments,0);
@@ -112,7 +123,7 @@ try{
   const f=fixture('redirect');await f.open();await assert.rejects(runOrderWorkflow(program,f.task,browser.methods),/重发/);assert.equal(f.cart.applies,1);assert.equal(f.cart.replays,0);assert.equal(f.cart.orders,0);
  });
  await run('final order body cannot replace a reviewed coupon during the submit click',async()=>{
-  const f=fixture('submit-mutation');await f.open();await assert.rejects(runOrderWorkflow(program,f.task,browser.methods),error=>error.code==='ORDER_COUPON_UNVERIFIED');assert.equal(f.cart.applies,1);assert.equal(f.cart.orders,0);assert.equal(f.cart.payments,0);
+  const f=fixture('submit-mutation');await f.open();await assert.rejects(runOrderWorkflow(program,f.task,browser.methods),error=>error.code==='ORDER_CONTRACT_UNVERIFIED');assert.equal(f.cart.applies,1);assert.equal(f.cart.orders,0);assert.equal(f.cart.payments,0);
  });
  await run('original invoice must match the discounted review before any payment',async()=>{
   const f=fixture('invoice-mismatch');await f.open();await assert.rejects(runOrderWorkflow(program,f.task,browser.methods),/付款金额/);assert.equal(f.cart.orders,1);assert.equal(f.cart.payments,0);
@@ -142,26 +153,26 @@ try{
  await run('unverified full discount cannot authorize a zero-total order under continue',async()=>{
   const f=fixture('percent','FREE');f.task.couponFailurePolicy='continue';await f.open();await assert.rejects(runOrderWorkflow(program,f.task,browser.methods),/零金额订单缺少已核验/);assert.equal(f.cart.orders,0);assert.equal(f.cart.payments,0);
  });
- await run('continue requires new approval and survives two trials plus one trigger with truthful logs',async()=>{
-  const f=fixture('normal','INVALID');Object.assign(f.task,{couponFailurePolicy:'continue',maxTotal:25});
+ await run('continue requires new approval and survives one trial plus one trigger with truthful logs',async()=>{
+  const f=fixture('normal','INVALID');f.cart.semantic=true;Object.assign(f.task,{couponFailurePolicy:'continue',maxTotal:25});
   const user={id:'continue-user',monitors:[{id:f.task.monitorId,kind:'webpage'}],orderTasks:[f.task],orderAccounts:[{monitorId:f.task.monitorId,loginUrl:f.task.url,revision:1,status:'saved',session:{state:storageState,check:{url:f.task.url}}}]};let ai=0;
   f.cart.guard=phase=>assert.ok(phase==='submit'?f.task.submissionStartedAt:f.task.paymentStartedAt);
-  const service=createOrderService({persist:()=>{},requestAI:async(_user,messages)=>{ai++;assert.equal(JSON.parse(messages[1].content).order.couponFailurePolicy,'continue');return generated;},openBrowser:(task,options)=>createOrderBrowser(task,{...options,couponVerificationTimeoutMs:1000})});
-  await service.generate(user,f.task);assert.equal(ai,1);assert.equal(f.task.trial.preflightPasses,2);assert.equal(f.task.trial.review.total,20);assert.equal(f.task.trial.review.couponFailure.status,'rejected');assert.equal(f.cart.orders,0);assert.equal(f.cart.payments,0);
+  const service=createOrderService({persist:()=>{},requestAI:async(_user,messages)=>{ai++;assert.equal(JSON.parse(messages[1].content).order.couponFailurePolicy,'continue');return semanticPlan(messages);},openBrowser:(task,options)=>createOrderBrowser(task,{...options,couponVerificationTimeoutMs:1000})});
+  await service.generate(user,f.task);assert.equal(ai,3);assert.equal(f.task.trial.preflightPasses,1);assert.equal(f.task.trial.review.total,20);assert.equal(f.task.trial.review.couponFailure.status,'rejected');assert.equal(f.cart.orders,0);assert.equal(f.cart.payments,0);
   const hash=orderProgramHash(f.task);f.task.couponFailurePolicy='stop';assert.throws(()=>service.approve(user,f.task,hash),/重新生成并试跑/);f.task.couponFailurePolicy='continue';service.approve(user,f.task,hash);
-  await service.trigger(user,user.monitors[0]);await service.trigger(user,user.monitors[0]);assert.equal(ai,1);assert.equal(f.task.status,'paid');assert.equal(f.task.result.payment.total,20);assert.equal(f.cart.orders,1);assert.equal(f.cart.payments,1);
+  await service.trigger(user,user.monitors[0]);const afterTrigger=ai;await service.trigger(user,user.monitors[0]);assert.equal(ai,afterTrigger);assert.equal(f.task.status,'paid',f.task.error);assert.equal(f.task.result.payment.total,20);assert.equal(f.cart.orders,1);assert.equal(f.cart.payments,1);
   const logs=user.orderExecutionLogs.filter(log=>log.taskId===f.task.id);assert.ok(logs.every(log=>log.context.couponFailurePolicy==='continue'));assert.ok(JSON.stringify(logs).includes('couponFailure'));assert.ok(JSON.stringify(logs).includes('优惠码失败继续'));
  });
  await run('coupon expiration after successful trials uses the approved continue policy within budget',async()=>{
-  const f=fixture();Object.assign(f.task,{couponFailurePolicy:'continue',maxTotal:25});const user={id:'expired-user',monitors:[{id:f.task.monitorId,kind:'webpage'}],orderTasks:[f.task],orderAccounts:[{monitorId:f.task.monitorId,loginUrl:f.task.url,revision:1,status:'saved',session:{state:storageState,check:{url:f.task.url}}}]};
-  const service=createOrderService({persist:()=>{},requestAI:async()=>generated,openBrowser:(task,options)=>createOrderBrowser(task,{...options,couponVerificationTimeoutMs:1000})});await service.generate(user,f.task);assert.equal(f.task.trial.review.total,15);service.approve(user,f.task,orderProgramHash(f.task));Object.assign(f.cart,{reject:true,code:'',failed:'SAVE20',discount:0,total:20});await service.execute(user,f.task);assert.equal(f.task.status,'paid');assert.equal(f.task.result.review.couponFailure.status,'rejected');assert.equal(f.task.result.payment.total,20);assert.equal(f.cart.orders,1);assert.equal(f.cart.payments,1);
+  const f=fixture();f.cart.semantic=true;Object.assign(f.task,{couponFailurePolicy:'continue',maxTotal:25});const user={id:'expired-user',monitors:[{id:f.task.monitorId,kind:'webpage'}],orderTasks:[f.task],orderAccounts:[{monitorId:f.task.monitorId,loginUrl:f.task.url,revision:1,status:'saved',session:{state:storageState,check:{url:f.task.url}}}]};
+  const service=createOrderService({persist:()=>{},requestAI:async(_user,messages)=>semanticPlan(messages),openBrowser:(task,options)=>createOrderBrowser(task,{...options,couponVerificationTimeoutMs:1000})});await service.generate(user,f.task);assert.equal(f.task.trial.review.total,15);service.approve(user,f.task,orderProgramHash(f.task));Object.assign(f.cart,{reject:true,code:'',failed:'SAVE20',discount:0,total:20});await service.execute(user,f.task);assert.equal(f.task.status,'paid',f.task.error);assert.equal(f.task.result.review.couponFailure.status,'rejected');assert.equal(f.task.result.payment.total,20);assert.equal(f.cart.orders,1);assert.equal(f.cart.payments,1);
  });
  await run('continue does not let old code skip the host coupon phase',async()=>{
   const f=fixture();f.task.couponFailurePolicy='continue';await f.open();await assert.rejects(browser.methods.submit(checkout),/尚未核验生效/);assert.equal(f.cart.applies,0);assert.equal(f.cart.orders,0);
  });
  await run('fully discounted order is submitted once and does not run payment or claim an unverified paid status',async()=>{
-  const f=fixture('normal','FREE'),user={id:'free-user',monitors:[{id:f.task.monitorId,kind:'webpage'}],orderTasks:[f.task],orderAccounts:[{monitorId:f.task.monitorId,loginUrl:f.task.url,revision:1,status:'saved',session:{state:storageState,check:{url:f.task.url}}}]};
-  const service=createOrderService({persist:()=>{},requestAI:async()=>generated});await service.generate(user,f.task);service.approve(user,f.task,orderProgramHash(f.task));await service.execute(user,f.task);
+  const f=fixture('normal','FREE');f.cart.semantic=true;const user={id:'free-user',monitors:[{id:f.task.monitorId,kind:'webpage'}],orderTasks:[f.task],orderAccounts:[{monitorId:f.task.monitorId,loginUrl:f.task.url,revision:1,status:'saved',session:{state:storageState,check:{url:f.task.url}}}]};
+  const service=createOrderService({persist:()=>{},requestAI:async(_user,messages)=>semanticPlan(messages)});await service.generate(user,f.task);service.approve(user,f.task,orderProgramHash(f.task));await service.execute(user,f.task);
   assert.equal(f.task.status,'awaiting_payment');assert.equal(f.task.result.paymentPending.reason,'zero_total');assert.equal(f.task.result.review.total,0);assert.equal(f.cart.orders,1);assert.equal(f.cart.payments,0);
  });
 }finally{if(browser)await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
