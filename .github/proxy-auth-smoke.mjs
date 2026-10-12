@@ -76,7 +76,7 @@ async function exercise(label,withProxy){
   const beforeOrders=orders,beforePayments=payments;
   for(let trial=0;trial<2;trial++)await withProxy(async route=>{
     const browser=await createOrderBrowser({...order,dryRun:true},{proxyUrl:route,launch,storageState:saved.state,sessionStorageState:saved.sessionStorage,loginCheck:saved.check});
-    try{const result=await runOrderWorkflow(program,order,browser.methods);assert.equal(result.status,'prepared');order.submissionContract=result.contract;assert.equal(order.submissionContract?.verified,true);Object.assign(saved,await browser.accountState());}finally{await browser.close();}
+    try{const result=await runOrderWorkflow(program,order,browser.methods);assert.equal(result.status,'prepared');order.submissionContract=result.requestContract;assert.equal(order.submissionContract?.status,'verified');Object.assign(saved,await browser.accountState());}finally{await browser.close();}
   });
   assert.equal(orders,beforeOrders);assert.equal(payments,beforePayments);
   await withProxy(async route=>{
