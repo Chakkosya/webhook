@@ -32,6 +32,15 @@ test('generation polling retries lost progress responses without resubmitting ge
 test('unresolved steps show a concrete confirmation question and candidates',()=>{
   const context=vm.createContext({window:{addEventListener(){}},document:{addEventListener(){}},escapeHtml:value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;')});
   vm.runInContext(source,context);
-  const html=context.orderValidationReport({status:'needs_validation',executionMode:'prepare',validation:{syntax:'passed'},input:{question:'请选择套餐',reason:'两个同名购买按钮',candidates:[{label:'购买 <script>',context:'套餐 A',options:['月付','年付']}]},failure:{stage:'planning',category:'needs_input',orderRequestSent:'no',suggestion:'请确认'}});
-  assert.match(html,/需要你确认/);assert.match(html,/请选择套餐/);assert.match(html,/套餐 A/);assert.match(html,/月付、年付/);assert.doesNotMatch(html,/<script>/);
+  const html=context.orderValidationReport({status:'needs_validation',executionMode:'prepare',validation:{syntax:'passed'},input:{question:'请选择套餐',reason:'两个同名购买按钮',options:['月付','年付'],candidates:[{label:'购买 <script>',context:'套餐 A',options:['月付','年付']}]},failure:{stage:'planning',category:'needs_input',orderRequestSent:'no',suggestion:'请确认'}});
+  assert.match(html,/需要你确认/);assert.match(html,/请选择套餐/);assert.match(html,/套餐 A/);assert.match(html,/月付、年付/);assert.doesNotMatch(html,/<script>/);assert.match(html,/data-order-clarification-choice="月付"/);assert.doesNotMatch(html,/阶段：|分类：|代码语法/);
+});
+
+
+test('saved internal format errors no longer ask the user to repair technical fields',()=>{
+  const context=vm.createContext({window:{addEventListener(){}},document:{addEventListener(){}},escapeHtml:value=>String(value??'')});
+  vm.runInContext(source,context);
+  const task={status:'needs_validation',errorCode:'ORDER_WORKFLOW_INVALID',error:'配置要求必须包含 name 和 value',input:{question:'请确认要购买的规格、套餐和周期。',reason:'配置要求必须包含 name 和 value'},failure:{stage:'generation',category:'needs_input',orderRequestSent:'no',suggestion:'请回答当前问题'}};
+  const html=context.orderValidationReport(task)+context.orderTaskError(task);
+  assert.doesNotMatch(html,/name|value|需要你确认|回答上面|order-clarification-answer|generation|needs_input/);assert.match(html,/购买方案暂时未能整理完成/);assert.match(html,/购买要求已保留/);
 });

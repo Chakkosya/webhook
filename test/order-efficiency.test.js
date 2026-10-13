@@ -70,6 +70,11 @@ test('created-order wording and pending payment do not hide an existing order',(
   for(const text of ['Order #42 created successfully','Order number: ABC-7 has been received','Order #42 confirmed, payment pending'])assert.ok(confirmationEvidence(page(text),'order'),text);
   for(const text of ['Order #42 not created','Order #42 pending','Order #42 created unsuccessfully'])assert.equal(confirmationEvidence(page(text),'order'),null,text);
   assert.equal(confirmationEvidence(page('Order #42 confirmed, payment pending'),'payment'),null);
+  const confirmation={elements:[{text:'Order Confirmation',visible:true},{text:'Your Order Number is: ABC-42',visible:true}]};
+  assert.deepEqual(confirmationEvidence(confirmation,'order'),{text:'Order Confirmation',orderId:'ABC-42'});
+  assert.equal(confirmationEvidence(confirmation,'payment'),null);
+  assert.equal(confirmationEvidence({elements:[confirmation.elements[0]]},'order'),null);
+  assert.equal(confirmationEvidence({elements:[confirmation.elements[0],{text:'Your Order Number is:',visible:true}]},'order'),null);
 });
 
 

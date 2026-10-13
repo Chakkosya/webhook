@@ -116,7 +116,7 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
               const required=program.workflow.requirements.find(required=>required.name===item.name);
               if(!required)continue;
               const observed=await read(item.target);
-              if(matchesOrderConfiguration(required.value,observed.value??observed.text))await methods.registerPreparation?.({action:observed.tag==='select'?'select':'fill',target:item.target,value:observed.selectedValue??observed.value});
+              if(matchesOrderConfiguration(required.value,observed.value??observed.text))await methods.registerPreparation?.({action:['radio','checkbox'].includes(observed.type)?'check':observed.tag==='select'?'select':'fill',target:item.target,value:observed.selectedValue??observed.value});
             }
             if(step.action==='cart')pendingVerification='cart';
             result=await methods[step.action](target,checks);

@@ -47,13 +47,13 @@ function batch(page){
     {action:'review',reason:'Check the current checkout',bindings:{submit:t('submit_order',el(5)),product:t('product',el(0)),quantity:t('quantity',el(1)),total:t('total',el(3)),currency:t('currency',el(4))},configuration:[{name:'Cycle',target:t('billing_cycle',el(2))}]}
   ]};
 }
-function serviceFixture({ambiguous=false}={}){
+function serviceFixture({ambiguous=false,businessReply=()=>program()}={}){
   const task=validateOrderTask({...order,instruction:'Cycle Monthly',monitorId:'m'});
   const user={id:'u',settings:{},monitors:[{id:'m',kind:'webpage'}],orderTasks:[task],orderAccounts:[{monitorId:'m',loginUrl:order.url,revision:1,status:'saved',session:{state:{cookies:[],origins:[]},check:{url:order.url}}}]};
   let business=0,assistance=0,opened=0,submitted=0;const sessions=[];
   const service=createOrderService({persist:()=>{},
     requestAI:async(_user,messages)=>{
-      if(messages[0].content===BUSINESS_PROMPT){business++;return program();}
+      if(messages[0].content===BUSINESS_PROMPT){business++;return businessReply(JSON.parse(messages[1].content),business);}
       assistance++;
       const content=typeof messages[1].content==='string'?messages[1].content:messages[1].content[0].text;
       const page=JSON.parse(content).page;
@@ -242,4 +242,37 @@ test('business query changes still require a current binding even with identical
   const next=createAssistedPlanner(async()=>{calls++;return {action:'stop',reason:'Different product route needs confirmation'};},{recipes});
   const result=await next({...base,observation:{...observation,url:order.url+'?pid=B&utm_source=new'}});
   assert.equal(result.action,'stop');assert.equal(calls,1);
+});
+
+
+test('AI requirement maps and numeric values retain every supplied purchase requirement',()=>{
+  const result=validateOrderProgram({summary:'8 cores, monthly',workflow:{version:2,requirements:{Cores:8,Cycle:'Monthly'}}});
+  assert.deepEqual(result.workflow.requirements,[{name:'Cores',value:'8'},{name:'Cycle',value:'Monthly'}]);
+  for(const item of [{name:'Cycle'},{value:'Monthly'},{name:'Cycle',value:{code:'m'}}])assert.throws(()=>validateOrderProgram({summary:'Monthly',workflow:{version:2,requirements:[item]}}),{code:'ORDER_WORKFLOW_INVALID'});
+});
+
+test('a malformed business response is corrected internally using the rejected response',async()=>{
+  const malformed={summary:'Purchase monthly',workflow:{version:2,requirements:[{value:'Monthly'}]}};
+  const f=serviceFixture({businessReply:(request,attempt)=>{
+    if(attempt===1)return malformed;
+    assert.deepEqual(request.feedback.previousResponse,malformed);assert.match(request.feedback.error,/name 和 value/);return program();
+  }});
+  await f.service.generate(f.user,f.task);
+  assert.equal(f.business,2);assert.equal(f.assistance,1);assert.equal(f.task.status,'ready');assert.equal(f.task.input,null);assert.equal(f.submitted,0);assert.deepEqual(f.task.program.workflow.requirements,[{name:'Cycle',value:'Monthly'}]);
+});
+
+test('repeated format failures do not become a question for the user',async()=>{
+  const f=serviceFixture({businessReply:()=>({summary:'Purchase monthly',workflow:{version:2,requirements:[{name:'Cycle'}]}})});
+  await assert.rejects(f.service.generate(f.user,f.task),/购买方案暂时未能整理完成/);
+  assert.equal(f.business,2);assert.equal(f.opened,0);assert.equal(f.task.input,null);assert.equal(f.task.failure.input,undefined);assert.notEqual(f.task.failure.category,'needs_input');assert.equal(f.task.trial,null);assert.equal(f.task.instruction,'Cycle Monthly');assert.doesNotMatch(f.task.error,/name|value|JSON|SOP/);
+  assert.ok(f.user.orderExecutionLogs[0].events.some(event=>event.error?.message.includes('name 和 value')));
+});
+
+test('only a concrete purchase choice prompts the user and a plain-language answer resumes preparation',async()=>{
+  const f=serviceFixture({businessReply:request=>request.order.userClarification?.answer==='月付'?program():{clarification:{question:'你想按月付费还是按年付费？',options:['月付','年付']}}});
+  f.task.instruction='月付或年付，想先确认一下';
+  await assert.rejects(f.service.generate(f.user,f.task),{code:'ORDER_BUSINESS_REQUIREMENTS_UNCLEAR'});
+  assert.equal(f.business,1);assert.equal(f.opened,0);assert.deepEqual(f.task.input.options,['月付','年付']);assert.equal(f.task.failure.category,'needs_input');
+  Object.assign(f.task,validateOrderTask({...f.task,clarificationAnswer:'月付'},f.task));
+  await f.service.generate(f.user,f.task);assert.equal(f.task.status,'ready');assert.equal(f.business,2);assert.equal(f.submitted,0);
 });

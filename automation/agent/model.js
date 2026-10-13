@@ -15,11 +15,13 @@ export function validateBusinessWorkflow(value){
       inspect(child,depth+1);
     }
   };inspect(value);
-  const requirements=value.requirements??[];
+  const supplied=value.requirements??[];
+  const requirements=!Array.isArray(supplied)&&typeof supplied==='object'?Object.entries(supplied).map(([name,value])=>({name,value})):supplied;
   if(!Array.isArray(requirements)||requirements.length>20)throw agentError('ORDER_WORKFLOW_INVALID','商品配置要求无效');
   return {version:2,businessSop:BUSINESS_SOP.map(step=>({...step})),requirements:requirements.map(item=>{
-    if(typeof item?.name!=='string'||!item.name.trim()||item.name.length>100||typeof item.value!=='string'||!item.value.trim()||item.value.length>200)throw agentError('ORDER_WORKFLOW_INVALID','配置要求必须包含 name 和 value');
-    return {name:item.name.trim(),value:item.value.trim()};
+    const configured=typeof item?.value==='number'&&Number.isFinite(item.value)?String(item.value):item?.value;
+    if(typeof item?.name!=='string'||!item.name.trim()||item.name.length>100||typeof configured!=='string'||!configured.trim()||configured.length>200)throw agentError('ORDER_WORKFLOW_INVALID','配置要求必须包含 name 和 value');
+    return {name:item.name.trim(),value:configured.trim()};
   })};
 }
 export function validateTarget(value){
