@@ -5,6 +5,9 @@ import fs from 'node:fs';
 import {chromium} from 'playwright-core';
 import {createOrderBrowser} from '../lib/order-browser.js';
 import {planningObservation,createAssistedPlanner} from '../automation/agent/local-planner.js';
+import {createPlanner} from '../automation/agent/planner.js';
+import {runCommerceAgent} from '../automation/agent/executor.js';
+import {validateOrderTask} from '../lib/orders.js';
 
 const executable=process.env.MONITOR_BROWSER_EXECUTABLE||(process.platform==='win32'&&fs.existsSync('C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe')?'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe':null);
 const workflow={version:2,requirements:[{name:'RAM',value:'64 GB'}]};
@@ -66,4 +69,36 @@ test('purchase entries stay attached to their product regions through observatio
       }finally{await session.close();}
     });
   }finally{await new Promise(resolve=>server.close(resolve));}
+});
+
+
+test('manually entering the product resumes through its real purchase link to prepared checkout',{skip:!executable},async()=>{
+  const requests=[],server=http.createServer((req,res)=>{
+    requests.push(req.method+' '+req.url);res.setHeader('content-type','text/html; charset=utf-8');
+    const login='<a href="/logout">Log out</a>';
+    if(req.url==='/product')return res.end(login+'<main><h1>Product A</h1><p>64 GB RAM</p><a href="/checkout">立即购买</a></main><aside><h2>Product B</h2><a href="/wrong-product">立即购买</a></aside>');
+    if(req.url==='/checkout')return res.end(login+'<main><h1>Product A</h1><form method="post" action="/complete"><label>Quantity<input name="quantity" type="number" value="1"></label><label>RAM<select name="ram"><option value="64" selected>64 GB</option><option value="128">128 GB</option></select></label><output id="total">USD 10.00</output><span id="currency">USD</span><button>Place order</button></form></main>');
+    res.end('Unexpected route');
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const base='http://127.0.0.1:'+server.address().port;
+  const current=validateOrderTask({url:base+'/product',product:'',monitorId:'m',quantity:1,maxTotal:20,currency:'USD',executionMode:'submit'});
+  current.input={kind:'page_step',question:'请确认当前步骤应操作哪个商品、配置项或入口。',url:current.url};
+  const order={...validateOrderTask({...current,product:'Product A',clarificationAnswer:'Product A'},current),dryRun:true,program:{workflow}};
+  let session,calls=0;
+  try{
+    session=await createOrderBrowser(order,{launch:options=>chromium.launch({...options,executablePath:executable})});
+    const plan=createAssistedPlanner(createPlanner(async messages=>{
+      calls++;const input=JSON.parse(messages[1].content),page=input.page;
+      assert.equal(page.url,base+'/checkout','the identified product entry must not need AI rebinding');
+      const quantity=page.elements.find(el=>el.name==='quantity'),ram=page.elements.find(el=>el.name==='ram');
+      return {steps:[
+        {action:'fill',reason:'Keep the selected quantity',target:target('quantity',quantity),value:'1'},
+        {action:'select',reason:'Keep the selected RAM',target:target('ram',ram),value:'64'},
+        {action:'review',reason:'Review the selected product',bindings:{submit:target('submit_order',page.elements.find(el=>el.tag==='button')),quantity:target('quantity',quantity),total:target('total',page.elements.find(el=>el.id==='total')),currency:target('currency',page.elements.find(el=>el.id==='currency'))},configuration:[{name:'RAM',target:target('ram',ram)}]}
+      ]};
+    }),{onSatisfied:step=>session.methods.registerPreparation(step)});
+    const receipt=await runCommerceAgent({workflow},order,session,{plan});
+    assert.equal(receipt.status,'prepared');assert.equal(receipt.review.product,'Product A');assert.equal(calls,1);assert.equal(order.input,null);assert.equal(session.submissionStarted,false);
+    assert.ok(requests.includes('GET /checkout'));assert.ok(!requests.some(request=>request.startsWith('POST ')||request.includes('/wrong-product')));
+  }finally{await session?.close();await new Promise(resolve=>server.close(resolve));}
 });

@@ -47,7 +47,7 @@ function batch(page){
     {action:'review',reason:'Check the current checkout',bindings:{submit:t('submit_order',el(5)),product:t('product',el(0)),quantity:t('quantity',el(1)),total:t('total',el(3)),currency:t('currency',el(4))},configuration:[{name:'Cycle',target:t('billing_cycle',el(2))}]}
   ]};
 }
-function serviceFixture({ambiguous=false,businessReply=()=>program()}={}){
+function serviceFixture({ambiguous=false,businessReply=()=>program(),stepReply,decorate}={}){
   const task=validateOrderTask({...order,instruction:'Cycle Monthly',monitorId:'m'});
   const user={id:'u',settings:{},monitors:[{id:'m',kind:'webpage'}],orderTasks:[task],orderAccounts:[{monitorId:'m',loginUrl:order.url,revision:1,status:'saved',session:{state:{cookies:[],origins:[]},check:{url:order.url}}}]};
   let business=0,assistance=0,opened=0,submitted=0;const sessions=[];
@@ -56,13 +56,14 @@ function serviceFixture({ambiguous=false,businessReply=()=>program()}={}){
       if(messages[0].content===BUSINESS_PROMPT){business++;return businessReply(JSON.parse(messages[1].content),business);}
       assistance++;
       const content=typeof messages[1].content==='string'?messages[1].content:messages[1].content[0].text;
-      const page=JSON.parse(content).page;
+      const input=JSON.parse(content),page=input.page;
       assert.equal(page.html,undefined);assert.equal(page.domTree,undefined);
+      if(stepReply)return stepReply(input,assistance);
       if(ambiguous)return {action:'fill',reason:'Unsure which quantity control',target:{meaning:'quantity',ref:page.elements[1].ref,confidence:0.6},value:'1'};
       return batch(page);
     },
     openBrowser:async(current,options)=>{
-      opened++;const session=fixture({unknown:true,dryRun:!!current.dryRun});sessions.push(session);
+      opened++;const session=fixture({unknown:true,dryRun:!!current.dryRun,decorate});sessions.push(session);
       const submit=session.methods.submit;
       session.methods.submit=async checks=>{if(!current.dryRun){await options.onBeforeSubmit({product:'Product A',quantity:1,total:10,currency:'USD'});submitted++;}return submit(checks);};
       return session;
@@ -99,11 +100,11 @@ test('one preflight and the approved execution reuse the compiled flow without m
   assert.deepEqual(f.sessions.map(session=>session.calls),Array.from({length:2},()=>['fill','select','review']));
   await assert.rejects(f.service.execute(f.user,f.task),/已经执行/);assert.equal(f.submitted,1);
 });
-test('uncertain AI evidence becomes an explicit question instead of regenerating the whole workflow',async()=>{
+test('repeated internal binding failures preserve the product without asking the user to diagnose the page',async()=>{
   const f=serviceFixture({ambiguous:true});
-  await assert.rejects(f.service.generate(f.user,f.task),{code:'AGENT_NEEDS_INPUT'});
+  await assert.rejects(f.service.generate(f.user,f.task),{code:'AGENT_BINDING_FAILED'});
   assert.equal(f.business,1);assert.equal(f.assistance,2);assert.equal(f.opened,1);assert.equal(f.submitted,0);
-  assert.equal(f.task.failure.category,'needs_input');assert.equal(f.task.failure.orderRequestSent,'no');assert.ok(f.task.input.candidates.some(item=>item.label==='Units'));assert.ok(f.task.input.question);
+  assert.equal(f.task.failure.category,'recoverable');assert.equal(f.task.failure.orderRequestSent,'no');assert.equal(f.task.input,null);assert.equal(f.task.failure.input,undefined);assert.equal(f.task.product,'Product A');assert.match(f.task.error,/无需重复填写/);
   assert.equal(f.task.trial,null);assert.equal(f.task.enabled,false);
 });
 test('a failed mapped action asks AI to repair only the current obstacle',async()=>{
@@ -111,8 +112,8 @@ test('a failed mapped action asks AI to repair only the current obstacle',async(
   await runCommerceAgent(program(),order,fixture(),{plan:createAssistedPlanner(async input=>batch(input.observation),{recipes})});
   const session=fixture({rejectFill:true});let assistance=0;
   const plan=createAssistedPlanner(async()=>{assistance++;return {action:'stop',reason:'网站拒绝数量修改，请确认是否需要先选择套餐'};},{recipes});
-  await assert.rejects(runCommerceAgent(program(),order,session,{plan}),error=>error.code==='AGENT_NEEDS_INPUT'&&Boolean(error.orderInput.question));
-  assert.equal(assistance,1);assert.deepEqual(session.calls,['fill']);assert.equal(session.receipt,null);
+  await assert.rejects(runCommerceAgent(program(),order,session,{plan}),error=>error.code==='AGENT_PLAN_INVALID'&&!error.orderInput&&/无需重复填写/.test(error.userMessage));
+  assert.equal(assistance,2);assert.deepEqual(session.calls,['fill']);assert.equal(session.receipt,null);
 });
 test('semantic compression preserves late controls and hidden invoice metadata',()=>{
   const page={url:order.url,html:'huge',domTree:[{}],elements:Array.from({length:1400},(_,i)=>({ref:'e'+i,tag:'span',text:'text '+i,visible:true}))};
@@ -127,16 +128,16 @@ test('ambiguous current controls invalidate learned actions rather than choosing
   const observe=session.methods.observe;
   session.methods.observe=async()=>{const page=await observe();page.elements.push({...page.elements[1],ref:'e999'});return page;};
   const plan=createAssistedPlanner(async()=>{assisted++;return {action:'stop',reason:'Two matching quantity inputs; please choose a package'};},{recipes});
-  await assert.rejects(runCommerceAgent(program(),order,session,{plan}),{code:'AGENT_NEEDS_INPUT'});
-  assert.equal(assisted,1);assert.deepEqual(session.calls,[]);
+  await assert.rejects(runCommerceAgent(program(),order,session,{plan}),error=>error.code==='AGENT_PLAN_INVALID'&&!error.orderInput);
+  assert.equal(assisted,3);assert.deepEqual(session.calls,[]);
 });
 
 
 test('familiar field words never trigger speculative actions before a page is mapped',async()=>{
   const session=fixture();let calls=0;
   const plan=createAssistedPlanner(async()=>{calls++;return {action:'stop',reason:'Please identify the intended offer'};});
-  await assert.rejects(runCommerceAgent(program(),order,session,{plan}),{code:'AGENT_NEEDS_INPUT'});
-  assert.equal(calls,1);assert.deepEqual(session.calls,[]);
+  await assert.rejects(runCommerceAgent(program(),order,session,{plan}),error=>error.code==='AGENT_PLAN_INVALID'&&!error.orderInput);
+  assert.equal(calls,3);assert.deepEqual(session.calls,[]);
 });
 test('the same business template works with arbitrary merchant labels',async()=>{
   const recipes=[];let calls=0;
@@ -207,16 +208,16 @@ test('a repeated button caption does not transfer an action to another product o
 
 
 test('a clarification inside coupon verification remains an explicit question',async()=>{
-  const session=fixture(),observed=await session.methods.observe(),t=(meaning,index)=>({meaning,ref:observed.elements[index].ref,confidence:0.95});
+  const session=fixture({decorate:page=>({...page,elements:[...page.elements,{ref:'e991',tag:'span',text:'满减优惠',visible:true},{ref:'e992',tag:'span',text:'折扣优惠',visible:true}]})}),observed=await session.methods.observe(),t=(meaning,index)=>({meaning,ref:observed.elements[index].ref,confidence:0.95});
   let plans=0;
   session.methods.applyCoupon=async(_coupon,_checkout,{rebind})=>rebind();
   const plan=async input=>{
     plans++;
-    if(input.context.pendingVerification==='coupon')return {action:'stop',reason:'请确认页面上两个优惠结果哪一个属于本商品'};
+    if(input.context.pendingVerification==='coupon')return {action:'stop',reason:'两个优惠方案需要选择',clarification:{question:'选择满减优惠还是折扣优惠？',options:['满减优惠','折扣优惠']}};
     const page=input.observation,bind=(meaning,index)=>({...t(meaning,index),ref:page.elements[index].ref});
     return {action:'apply_coupon',reason:'Apply authorized coupon',bindings:{input:bind('coupon_input',1),apply:bind('coupon_apply',5),appliedCode:bind('coupon_proof',0),discount:bind('discount',3),submit:bind('submit_order',5),product:bind('product',0),quantity:bind('quantity',1),total:bind('total',3),currency:bind('currency',4)}};
   };
-  await assert.rejects(runCommerceAgent(program(),{...order,couponCode:'SAVE'},session,{plan}),error=>error.code==='AGENT_NEEDS_INPUT'&&error.orderInput.reason.includes('两个优惠结果'));
+  await assert.rejects(runCommerceAgent(program(),{...order,couponCode:'SAVE'},session,{plan}),error=>error.code==='AGENT_NEEDS_INPUT'&&error.orderInput.question.includes('满减优惠'));
   assert.equal(plans,2);assert.equal(session.receipt,null);
 });
 
@@ -275,4 +276,109 @@ test('only a concrete purchase choice prompts the user and a plain-language answ
   assert.equal(f.business,1);assert.equal(f.opened,0);assert.deepEqual(f.task.input.options,['月付','年付']);assert.equal(f.task.failure.category,'needs_input');
   Object.assign(f.task,validateOrderTask({...f.task,clarificationAnswer:'月付'},f.task));
   await f.service.generate(f.user,f.task);assert.equal(f.task.status,'ready');assert.equal(f.business,2);assert.equal(f.submitted,0);
+});
+
+
+test('a malformed page action receives its rejected output and the already identified product',async()=>{
+  let rejected;
+  const f=serviceFixture({stepReply:(input,attempt)=>{
+    assert.equal(input.order.product,'Product A');assert.equal(input.order.url,order.url);
+    assert.equal(input.page.targetProduct.status,'identified');assert.equal(input.page.targetProduct.name,'Product A');
+    assert.ok(input.page.targetProduct.refs.every(ref=>input.page.elements.some(el=>el.ref===ref)));
+    if(attempt===1){rejected=batch(input.page);rejected.steps[0].target.meaning='商品数量';return rejected;}
+    assert.deepEqual(input.feedback.previousPlan,rejected);assert.equal(input.feedback.error.code,'AGENT_PLAN_INVALID');
+    return batch(input.page);
+  }});
+  await f.service.generate(f.user,f.task);
+  assert.equal(f.assistance,2);assert.equal(f.opened,1);assert.equal(f.task.status,'ready');assert.equal(f.task.input,null);assert.equal(f.submitted,0);
+});
+
+test('a generic request to identify an already supplied product is repaired internally',async()=>{
+  const f=serviceFixture({stepReply:(input,attempt)=>{
+    if(attempt===1)return {action:'stop',reason:'请确认当前步骤应操作哪个商品、配置项或入口。'};
+    assert.equal(input.feedback.previousPlan.action,'stop');assert.equal(input.page.targetProduct.status,'identified');
+    return batch(input.page);
+  }});
+  await f.service.generate(f.user,f.task);assert.equal(f.assistance,2);assert.equal(f.task.status,'ready');assert.equal(f.task.input,null);
+});
+
+test('a real page choice resumes with its answer and cannot become the same question again',async()=>{
+  const question={action:'stop',reason:'两个不同机房',clarification:{question:'选择哪个机房？',options:['东京','大阪']}};
+  const decorate=page=>({...page,elements:[...page.elements,{ref:'e900',tag:'span',text:'东京',visible:true},{ref:'e901',tag:'span',text:'大阪',visible:true}]});
+  let repeat=false;
+  const f=serviceFixture({decorate,stepReply:input=>!input.userClarification||repeat?question:batch(input.page)});
+  await assert.rejects(f.service.generate(f.user,f.task),{code:'AGENT_NEEDS_INPUT'});
+  assert.deepEqual(f.task.input.options,['东京','大阪']);assert.equal(f.task.input.question,'选择哪个机房？');
+  const current={version:2,scope:{origin:new URL(order.url).origin,path:new URL(order.url).pathname}},prefix={version:2,scope:{origin:new URL(order.url).origin,path:'/catalog'}};
+  f.task.program.runtimePlan=[prefix,current];f.task.flowMemory={scope:'fixture',recipes:[prefix,current]};
+  Object.assign(f.task,validateOrderTask({...f.task,clarificationAnswer:'东京'},f.task));
+  assert.deepEqual(f.task.program.runtimePlan,[prefix]);assert.deepEqual(f.task.flowMemory.recipes,[prefix]);
+  // The selected page is replanned with the answer, while the saved business requirements survive.
+  f.task.program.runtimePlan=[];f.task.flowMemory=null;
+  await f.service.generate(f.user,f.task);assert.equal(f.task.status,'ready');assert.equal(f.task.userClarification.answer,'东京');assert.equal(f.business,1);
+  repeat=true;f.task.program.runtimePlan=[];f.task.flowMemory=null;
+  await assert.rejects(f.service.generate(f.user,f.task),{code:'AGENT_BINDING_FAILED'});
+  assert.equal(f.task.input,null);assert.equal(f.task.failure.input,undefined);assert.equal(f.task.product,'Product A');
+});
+
+test('editing the product does not force an answer to an obsolete question',()=>{
+  const current=validateOrderTask({...order,monitorId:'m'});
+  current.input={kind:'page_step',question:'旧商品确认',url:order.url};
+  const next=validateOrderTask({...current,product:'Product B',clarificationAnswer:'Product B'},current);
+  assert.equal(next.product,'Product B');assert.equal(next.input,null);assert.equal(next.userClarification,null);assert.equal(next.program,null);
+});
+
+test('a product URL alone cannot identify a missing or different product',()=>{
+  const page={url:order.url,elements:[{ref:'e0',tag:'h1',role:'heading',text:'Product B',visible:true}]};
+  assert.equal(planningObservation(page,{order}).targetProduct.status,'not_found');
+  const choices={...page,elements:['r1','r2'].map((regionRef,i)=>({ref:'e'+i,tag:'h1',role:'heading',text:'Product A',regionRef,visible:true}))};
+  assert.equal(planningObservation(choices,{order}).targetProduct.status,'multiple_matches');
+});
+
+
+test('page questions cannot ask again for an already specified billing choice',async()=>{
+  const f=serviceFixture({stepReply:(input,attempt)=>{
+    if(attempt===1)return {action:'stop',reason:'Choose a billing cycle',clarification:{question:'按月还是按年付款？',options:['Monthly','Yearly']}};
+    assert.match(input.feedback.error.message,/已明确选择「Monthly」/);return batch(input.page);
+  }});
+  await f.service.generate(f.user,f.task);
+  assert.equal(f.task.status,'ready');assert.equal(f.assistance,2);assert.equal(f.task.input,null);assert.deepEqual(f.task.program.workflow.requirements,[{name:'Cycle',value:'Monthly'}]);
+});
+
+
+test('an explicit product name supplies the current checkout binding without another model question',async()=>{
+  const f=serviceFixture({stepReply:input=>{
+    const result=batch(input.page);
+    result.steps.at(-1).bindings.product={ref:input.page.targetProduct.binding.ref,meaning:'商品',confidence:0.4};
+    return result;
+  }});
+  await f.service.generate(f.user,f.task);
+  assert.equal(f.task.status,'ready');assert.equal(f.assistance,1);assert.equal(f.task.input,null);assert.equal(f.submitted,0);
+  assert.deepEqual(f.sessions[0].calls,['fill','select','review']);
+});
+
+test('a valid live ref is executable even when an unlabelled field cannot produce a reusable locator',async()=>{
+  for(const id of ['quantity-control',null]){
+    const recipes=[],session=fixture({decorate:page=>{delete page.elements[1].name;delete page.elements[1].label;page.elements[1].id=id;return page;}});
+    let calls=0;
+    const result=await runCommerceAgent(program(),order,session,{plan:createAssistedPlanner(async input=>{calls++;return batch(input.observation);},{recipes})});
+    assert.equal(result.status,'prepared');assert.deepEqual(session.calls,['fill','select','review']);
+    assert.equal(calls,id?1:2);assert.ok(recipes.every(recipe=>!recipe.currentOnly));assert.doesNotMatch(JSON.stringify(recipes),/"ref"|observationId/);
+  }
+});
+
+
+test('typing the product in the old confirmation box binds it and survives navigation',async()=>{
+  const f=serviceFixture({stepReply:input=>{
+    assert.equal(input.order.product,'Product A');
+    const result=batch(input.page);delete result.steps.at(-1).bindings.product;return result;
+  }});
+  f.task.product='';f.task.input={kind:'page_step',question:'请确认当前步骤应操作哪个商品、配置项或入口。',url:order.url};
+  Object.assign(f.task,validateOrderTask({...f.task,clarificationAnswer:'Product A'},f.task));
+  await f.service.generate(f.user,f.task);
+  assert.equal(f.task.status,'ready');assert.equal(f.task.verifiedProduct,'Product A');assert.equal(f.task.input,null);assert.equal(f.assistance,1);
+  const base={order:{...order,product:'',userClarification:f.task.userClarification},workflow:program().workflow,context:{}};
+  const planner=createAssistedPlanner(async input=>{assert.equal(input.order.product,'Product A');return batch(input.observation);});
+  const page=await fixture().methods.observe();await planner({...base,observation:page});planner.reject();
+  await planner({...base,observation:{...page,url:'https://shop.example/next'}});
 });

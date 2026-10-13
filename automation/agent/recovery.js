@@ -15,5 +15,5 @@ export async function recoveryContext(error,session,history,{signal,run=fn=>fn()
     signal?.throwIfAborted();
     try{observation=await run(()=>session.methods.observe());break;}catch(readError){if(attempt===1)throw readError;}
   }
-  return {observation,image:evidence?.image,feedback:{error:{code:error.code||null,message:String(error.message).slice(0,600)},...(error.orderAmbiguity?{ambiguity:error.orderAmbiguity}:{}),url:observation.url,evidenceId:evidence?.id||null}};
+  return {observation,image:evidence?.image,feedback:{error:{code:error.code||null,message:String(error.message).slice(0,600)},previousPlan:error.rejectedPlan,...(error.orderAmbiguity?{ambiguity:error.orderAmbiguity}:{}),url:observation.url,evidenceId:evidence?.id||null}};
 }

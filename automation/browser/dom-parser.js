@@ -74,7 +74,7 @@ export function inspectCommercePage(input){
     const text=el.tagName==='INPUT'?(el.type==='submit'||el.type==='button'?el.value:''):readable(el).slice(0,300);
     const accessibleName=(el.getAttribute('aria-label')||labelled||label||text||el.getAttribute('alt')||el.getAttribute('title')||'').slice(0,300);
     return {ref,tag:el.tagName.toLowerCase(),role:role(el),accessibleName,text,regionRef:regions.get(regionFor(el)),contextText:contextText(el),label:label.slice(0,300),placeholder:el.getAttribute('placeholder'),name:el.getAttribute('name'),id:el.id||null,
-      type:el.getAttribute('type'),visible:visible(el),disabled:!!el.disabled,readOnly:!!el.readOnly,checked:['checkbox','radio'].includes(el.type)?el.checked:undefined,
+      type:el.getAttribute('type'),visible:visible(el),disabled:!!el.disabled,readOnly:!!el.readOnly,required:!!el.required,checked:['checkbox','radio'].includes(el.type)?el.checked:undefined,
       value:privateField?undefined:el.tagName==='SELECT'?[...el.selectedOptions].map(o=>o.textContent.trim()).join(' '):['INPUT','TEXTAREA'].includes(el.tagName)?el.value:undefined,
       href:el.tagName==='A'?el.getAttribute('href'):undefined,formRef:refs.get(el.form),parentRef:refs.get(el.parentElement),
       options:el.tagName==='SELECT'?[...el.options].map(o=>({value:o.value,text:o.textContent.trim(),selected:o.selected,disabled:o.disabled})):undefined};

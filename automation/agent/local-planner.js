@@ -1,4 +1,6 @@
 import {randomUUID} from 'node:crypto';
+import {bindingFailure} from './clarification.js';
+import {bindKnownProduct,productEntry,productContext} from './product-binding.js';
 import {agentError} from './model.js';
 import {matchesOrderConfiguration} from '../../lib/order-evidence.js';
 import {validateStep} from './planner.js';
@@ -29,7 +31,7 @@ function scopeFor(input){
 const scopeKey=input=>scopeIdentity(scopeFor(input));
 function describe(el,slot,page){
   if(!el)return null;
-  const cues=Object.fromEntries(['name','label','accessibleName','text','placeholder','href'].filter(key=>el[key]!=null&&el[key]!=='').map(key=>[key,String(el[key])]));
+  const cues=Object.fromEntries(['id','name','label','accessibleName','text','placeholder','href'].filter(key=>el[key]!=null&&el[key]!=='').map(key=>[key,String(el[key])]));
   // Current amounts are read again by the host. Their numeric value is not a locator.
   const dynamicText=amountSlots.has(slot);
   if(dynamicText)for(const key of ['text','accessibleName'])if(cues[key]&&/\d/.test(cues[key]))cues[key]=numericShape(cues[key]);
@@ -82,22 +84,26 @@ function transformTargets(step,convert){
 function compile(step,input,{group,transient=false}={}){
   if(!transient&&['stop','wait','pay','invoice'].includes(step.action))return null;
   try{
+    let currentOnly=false;
     const template=transformTargets(step,(value,slot)=>{
       const descriptor=describe(input.observation.elements?.find(el=>el.ref===value.ref),slot,input.observation);
-      if(!descriptor)throw new Error('No observed binding');
+      if(!descriptor){
+        if(!transient||!input.observation.elements.some(el=>el.ref===value.ref))throw new Error('No observed binding');
+        currentOnly=true;return {...value,observationId:input.observation.observationId};
+      }
       if(slot==='target'&&['click','cart','configure','invoice'].includes(step.action)){descriptor.actionTarget=true;descriptor.route=input.observation.url;}
       return {meaning:value.meaning,confidence:value.confidence,descriptor};
     });
     const el=input.observation.elements.find(el=>el.ref===step.target?.ref);
     const option=['select','choosePayment'].includes(step.action)?el?.options?.find(option=>String(option.value)===String(step.value)):null;
-    return {version:2,group,scope:scopeFor(input),stage:stageForAction(step.action),template,...(option?{optionText:option.text}:{})};
+    return {version:2,group,scope:scopeFor(input),stage:stageForAction(step.action),template,...(currentOnly?{currentOnly:true}:{}),...(option?{optionText:option.text}:{})};
   }catch{return null;}
 }
 function restore(recipe,input){
   if(recipe.version!==2||scopeIdentity(recipe.scope)!==scopeKey(input))return null;
   try{
     let step=transformTargets(recipe.template,value=>{
-      const el=locate(value.descriptor,input.observation);
+      const el=value.descriptor?locate(value.descriptor,input.observation):value.observationId===input.observation.observationId?input.observation.elements.find(el=>el.ref===value.ref):null;
       if(!el)throw new Error('Current binding is missing or ambiguous');
       return {meaning:value.meaning,confidence:value.confidence,ref:el.ref};
     });
@@ -132,7 +138,7 @@ function stable(value){
 const actionKey=step=>JSON.stringify(stable({...step,reason:undefined}));
 function recipeKey(recipe){
   if(recipe?.version!==2||!recipe.template)return null;
-  const template=transformTargets(recipe.template,target=>({descriptor:target.descriptor}));
+  const template=transformTargets(recipe.template,target=>target.descriptor?{descriptor:target.descriptor}:target);
   return JSON.stringify(stable({scope:JSON.parse(scopeIdentity(recipe.scope)),template:{...template,reason:undefined},optionText:recipe.optionText}));
 }
 function satisfied(step,recipe,input,completed){
@@ -173,15 +179,10 @@ async function rememberedStep(recipes,input,completed,onSatisfied){
   const distinct=[...new Map(pool.map(item=>[actionKey(item.step),item])).values()];
   return distinct.length===1?distinct[0]:null;
 }
-export function clarificationFor(error,observation){
-  const candidates=(observation.elements||[]).filter(el=>visible(el)&&controls.has(el.role)).sort((a,b)=>Number(a.role==='link')-Number(b.role==='link')).map(el=>({label:el.label||el.accessibleName||el.text||el.name,context:String(el.contextText||'').slice(0,300),options:el.options?.map(({text})=>text)})).filter(el=>el.label).slice(0,12);
-  return {kind:'page_step',question:'请确认当前步骤应操作哪个商品、配置项或入口。',reason:error.message,url:observation.url,candidates};
-}
-const needsInput=(message,observation)=>Object.assign(agentError('AGENT_NEEDS_INPUT',message),{orderInput:clarificationFor(new Error(message),observation)});
 export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEvent=()=>{},allowAssistance=true,onSatisfied=async()=>{}}={}){
-  let lastInput,lastStep,lastRecipe,pending=[];
+  let lastInput,lastStep,lastRecipe,identifiedProduct,pending=[];
   const expandedPages=new Set(),failedPages=new Map(),metadata=new WeakMap(),completed=new Set(),completedClicks=[];
-  const rememberRecipe=recipe=>{const key=recipeKey(recipe);completed.add(key);if(!recipes.some(item=>recipeKey(item)===key)){recipes.push(recipe);onRemember(recipes);}};
+  const rememberRecipe=recipe=>{if(recipe.currentOnly)return;const key=recipeKey(recipe);completed.add(key);if(!recipes.some(item=>recipeKey(item)===key)){recipes.push(recipe);onRemember(recipes);}};
   const invalidate=recipe=>{
     if(!recipe)return;
     const index=recipes.indexOf(recipe),key=recipeKey(recipe);let changed=false;
@@ -196,6 +197,11 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
     rememberRecipe(recipe);
   };
   const planner=async input=>{
+    if(!input.order.product&&!input.order.productSelection){
+      const product=productContext(input.observation,input.order);
+      if(product?.binding)identifiedProduct=product.name;
+      if(identifiedProduct)input={...input,order:{...input.order,product:identifiedProduct}};
+    }
     lastInput=input;lastStep=null;lastRecipe=null;
     let step,group,recipe,source='learned';
     if(!input.feedback){
@@ -210,17 +216,24 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
         if(found){lastRecipe=found.recipe;recipe=found.recipe;step=found.step;group=found.recipe.group;}
       }
     }
+    if(!step&&!input.feedback){
+      const entry=productEntry(input);
+      if(entry&&!completedClicks.some(item=>scopeIdentity(item.scope)===scopeKey(input)&&locate(item.template.target.descriptor,input.observation)?.ref===entry.target.ref)){
+        step=entry;source='product_binding';group=randomUUID();recipe=compile(step,input,{group});
+      }
+    }
     if(!step){
-      if(!allowAssistance)throw needsInput('当前步骤的已学绑定失效，且本任务已关闭自动辅助；请确认页面步骤后重新生成。',input.observation);
+      if(!allowAssistance)throw bindingFailure();
       source='ai_assistance';group=randomUUID();
       const key=scopeKey(input);
-      if((failedPages.get(key)||0)>=2)throw needsInput('当前步骤的动态绑定仍不确定，需要你确认。',input.observation);
+      if((failedPages.get(key)||0)>=2)throw bindingFailure();
+      let result;
       try{
         const current=recipes.filter(item=>item.version===2&&scopeIdentity(item.scope)===key);
         const knownSteps=[...new Map(current.map(item=>{const state={stage:item.stage,action:item.template.action,completed:completed.has(recipeKey(item)),needsBinding:!completed.has(recipeKey(item))&&!restore(item,input)};return [JSON.stringify(state),state];})).values()];
         const focusRefs=current.flatMap(item=>{const restored=restore(item,input);if(!restored)return [];const refs=[];transformTargets(restored,target=>{refs.push(target.ref);return target;});return refs;});
         const observation=planningObservation(input.observation,{...input,focusRefs,expanded:expandedPages.has(key)});
-        const result=await assist({...input,flow:{...flowContext(input),knownSteps},observation});
+        result=await assist({...input,flow:{...flowContext(input),knownSteps},observation});
         const first=result.steps?.[0]||result;
         if(first.action==='stop'&&!observation.coverage.complete&&!expandedPages.has(key)&&!/out\s+of\s+stock|sold\s+out|captcha|缺货|售罄|验证码|二次验证/i.test(first.reason||'')){
           expandedPages.add(key);
@@ -228,13 +241,13 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
         }
         const observedRefs=new Set(observation.elements.map(el=>el.ref));
         const steps=(result.steps||[result]).map(value=>{
-          const validated=resolveValueSource(validateStep(value),input);
+          const validated=resolveValueSource(validateStep(bindKnownProduct(value,input.observation,input.order)),input);
           transformTargets(validated,(target,slot)=>{
-            if(!observedRefs.has(target.ref))throw needsInput('当前页面摘要没有这个操作所需的元素，请确认缺少的区域或下一入口。',input.observation);
+            if(!observedRefs.has(target.ref))throw agentError('AGENT_ELEMENT_MISSING','动作引用了未提供的元素，请扩大当前商品区域并重新绑定当前 ref。');
             const displayed=observation.elements.find(el=>el.ref===target.ref);
             if(displayed.omittedMatchingControls){
               const actual=input.observation.elements.find(el=>el.ref===target.ref),descriptor=describe(actual,slot,input.observation);
-              if(!descriptor||locate(descriptor,input.observation)?.ref!==target.ref)throw needsInput('页面还有同名候选，当前区域证据无法唯一确定操作对象，请确认具体商品或控件。',input.observation);
+              if(!descriptor||locate(descriptor,input.observation)?.ref!==target.ref)throw agentError('AGENT_ELEMENT_MISSING','页面存在同名控件，请结合已给出的商品与区域证据重新定位。');
             }
             return target;
           });
@@ -256,12 +269,13 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
         step=steps[nextIndex];recipe=compiledSteps[nextIndex];pending=compiledSteps.slice(nextIndex+1);
       }catch(error){
         if(['AGENT_LOW_CONFIDENCE','AGENT_PLAN_INVALID','AGENT_STEP_UNVERIFIED'].includes(error.code))failedPages.set(key,(failedPages.get(key)||0)+1);
-        if(error.code==='AGENT_LOW_CONFIDENCE')error.orderInput=clarificationFor(error,input.observation);
+        error.rejectedPlan??=result;
+        if(error.code==='AGENT_ELEMENT_MISSING')expandedPages.add(key);
         throw error;
       }
     }
-    if(step.action==='click'&&completedClicks.some(item=>scopeIdentity(item.scope)===scopeKey(input)&&locate({...item.template.target.descriptor,actionTarget:false},input.observation)?.ref===step.target?.ref))throw needsInput('这个入口已成功操作，当前页面仍未显示可继续的步骤，请确认展开后的配置或下一入口。',input.observation);
-    if(recipe&&completed.has(recipeKey(recipe))&&!settings.has(step.action))throw needsInput('当前步骤已经完成，页面未出现可确认的下一步；请确认当前状态。',input.observation);
+    if(step.action==='click'&&completedClicks.some(item=>scopeIdentity(item.scope)===scopeKey(input)&&locate({...item.template.target.descriptor,actionTarget:false},input.observation)?.ref===step.target?.ref))throw agentError('AGENT_NO_PROGRESS','该入口已操作，请识别当前页面发生的变化或下一购买步骤，不再点击相同入口。');
+    if(recipe&&completed.has(recipeKey(recipe))&&!settings.has(step.action))throw agentError('AGENT_NO_PROGRESS','当前步骤已完成，请根据当前页面识别下一步。');
     lastStep=validateStep(step);metadata.set(lastStep,{group,recipe});
     onEvent('步骤来源',{source,stage:stageForAction(step.action),action:step.action});return lastStep;
   };
@@ -270,8 +284,9 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
     if(!step||!input)return;
     const meta=metadata.get(step),group=meta?.group||randomUUID();
     const recipe=meta?.recipe||compile(step,input,{group});
-    if(!recipe||['stop','wait','pay','invoice'].includes(step.action))return;
-    const key=recipeKey(recipe);completed.add(key);failedPages.delete(scopeKey(input));
+    failedPages.delete(scopeKey(input));
+    if(!recipe||recipe.currentOnly||['stop','wait','pay','invoice'].includes(step.action))return;
+    const key=recipeKey(recipe);completed.add(key);
     if(step.action==='click'&&recipe.template.target&&!completedClicks.some(item=>recipeKey(item)===key))completedClicks.push(recipe);
     rememberRecipe(recipe);
   };

@@ -5,28 +5,13 @@ import {DEFAULT_ORDER_TIMEOUTS,createOrderDeadline,abortable} from '../../lib/or
 import {validateStep} from './planner.js';
 import {agentError,validateTarget} from './model.js';
 import {canRecover,recoveryContext,isPlanningUncertainty} from './recovery.js';
-import {clarificationFor} from './local-planner.js';
+import {bindingFailure,stopError} from './clarification.js';
 import {assertCartQuantityCorrection} from './flow-template.js';
 import {pageType} from '../adapters/generic-commerce.js';
 const checkoutKeys={submit:'submitSelector',product:'productSelector',quantity:'quantitySelector',total:'totalSelector',currency:'currencySelector'};
 const couponKeys={input:'inputSelector',apply:'applySelector',appliedCode:'appliedCodeSelector',discount:'discountSelector'};
 const paymentKeys={pay:'paySelector',invoice:'invoiceSelector',total:'totalSelector',currency:'currencySelector',balance:'balanceSelector',balanceCurrency:'balanceCurrencySelector',pending:'pendingSelector'};
 const normalize=value=>String(value).normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
-function inputForUncertainty(error,observation,{step,action}={}){
-  const details=error.orderAmbiguity,base=error.orderInput||clarificationFor(error,observation);
-  let question=base.question,candidates=base.candidates;
-  if(details?.kind==='configuration'){
-    question=details.observed===undefined
-      ?'请指出「'+details.requirement+'」对应的配置项；已确认要求是「'+details.expected+'」。'
-      :'已确认「'+details.requirement+'」应为「'+details.expected+'」，当前读到「'+details.observed+'」。请说明正确配置项的位置；修改规格需要先修改任务要求。';
-    const tokens=[details.requirement,details.expected].map(normalize);
-    const relevant=(observation.elements||[]).filter(el=>el.visible!==false&&!el.disabled&&el.type!=='password'&&el.type!=='hidden').map(el=>({el,score:Number(el.ref===details.target?.ref)*4+tokens.filter(token=>token&&normalize([el.label,el.accessibleName,el.text,el.contextText].join(' ')).includes(token)).length})).filter(item=>item.score>0).sort((a,b)=>b.score-a.score).slice(0,8).map(({el})=>({label:el.label||el.accessibleName||el.text||el.name,context:String(el.contextText||'').slice(0,240),options:el.options?.slice(0,20).map(({text})=>text)})).filter(item=>item.label);
-    if(relevant.length)candidates=relevant;
-  }else if(error.code==='AGENT_NO_PROGRESS')question='当前页面未继续前进。请说明下一步应操作的入口，以及操作后应出现的页面或配置。';
-  else if(error.code==='AGENT_DISCOVERY_REQUIRED')question='当前页面中，哪个购买或配置入口对应你的目标商品？';
-  else if(error.code==='AGENT_STEP_UNVERIFIED'&&step)question='页面未完成「'+step.reason+'」。请说明正确的操作入口或必须先完成的配置。';
-  return {...base,question,candidates,code:error.code,action:step?.action||action||null,...(details?{requirement:details.requirement,expected:details.expected,observed:details.observed}:{}),constraint:'回答仅用于识别当前步骤；商品、数量、规格、预算和交易权限仍以已确认任务为准。'};
-}
 export async function runCommerceAgent(program,order,session,{plan,signal,memory=null,onEvent=()=>{},onLearn=async()=>{},maxSteps=40,timeoutMs=DEFAULT_ORDER_TIMEOUTS.agentTimeoutMs,autoRepair=true}={}){
   if(!plan||!session.methods.observe||!session.methods.resolveSemantic)throw agentError('AGENT_UNAVAILABLE',"浏览器缺少语义观察和动态规划能力");
   const emit=(action,data)=>{try{onEvent(action,data);}catch{/* Diagnostics must not change an execution result. */}};
@@ -83,12 +68,7 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
         const step=validateStep(await planWithinBudget(planInput));plannedStep=step;const originalPlanInput=planInput;
         emit('动态计划',{step:index+1,observationId:observation.observationId,url:observation.url,plan:diagnosticAIOutput(step),remainingMs:Math.max(0,deadline-Date.now()),action:step.action,reason:step.reason,meanings:[...(step.target?[step.target.meaning]:[]),...Object.values(step.bindings||{}).map(target=>target.meaning)]});
         feedback=null;image=null;signal?.throwIfAborted();currentAction=step.action;stage=step.action==='review'?'checkout':['cart','verify_cart'].includes(step.action)?'cart':['apply_coupon','verify_coupon'].includes(step.action)?'coupon':['invoice','pay'].includes(step.action)?'payment':step.action==='stop'?'planning':'configuration';
-        if(step.action==='stop'){
-          const stock=/out\s+of\s+stock|sold\s+out|缺货|无货|售罄/i.test(step.reason);
-          const error=agentError(stock?'ORDER_OUT_OF_STOCK':'AGENT_NEEDS_INPUT',step.reason);
-          if(!stock)error.orderInput=inputForUncertainty(error,observation,{step});
-          throw error;
-        }
+        if(step.action==='stop')throw stopError(step,observation,order,program.workflow);
         if(session.submissionStarted&&!['invoice','pay'].includes(step.action))throw agentError('AGENT_PLAN_INVALID',"订单已提交，只能处理原订单账单");
         const cartCorrection=pendingVerification==='cart'&&['fill','select'].includes(step.action);
         if(cartCorrection){
@@ -146,11 +126,12 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
                 planInput=input;observation=page;plannedStep=null;rejectionHandled=false;
                 try{
                   const next=validateStep(await planWithinBudget(input));plannedStep=next;couponRebind={step:next,input};
-                  if(next.action==='stop'){const error=agentError('AGENT_NEEDS_INPUT',next.reason);error.orderInput=inputForUncertainty(error,page,{step:next});throw error;}
+                  if(next.action==='stop')throw stopError(next,page,order,program.workflow);
                   if(next.action!=='verify_coupon')throw agentError('AGENT_STEP_UNVERIFIED','优惠请求后只能重新定位核验字段');
                   if(next.paymentMethod)await methods.choosePayment({selector:await resolve(next.paymentMethod.target),value:next.paymentMethod.value});
                   return {coupon:await bind(next.bindings,couponKeys),checkout:await bind(next.bindings,checkoutKeys)};
                 }catch(error){
+                  error.rejectedPlan??=plannedStep;
                   plan.reject?.({error,input,observation:page,step:plannedStep});rejectionHandled=true;
                   if(!autoRepair||!canRecover(error,session,{signal,attempts:repairs}))throw error;
                   repairs++;const recovered=await recoveryContext(error,session,history,{signal,run:fn=>abortable(fn,signal),includeImage:repairs>1&&error.code==='AGENT_LOW_CONFIDENCE'});
@@ -190,11 +171,12 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
         const entry={action:step.action,pageType:pageType(observation),meanings:[...(step.target?[step.target.meaning]:[]),...Object.values(step.bindings||{}).map(t=>t.meaning)],verified:true};
         history.push(entry);if(['verify_cart'].includes(step.action))completed.add(step.action);emit('动态步骤完成',{...entry,step:index+1,durationMs:Date.now()-stepStarted,pendingVerification,receipt:diagnosticReceipt(result)});
       }catch(error){
+        error.rejectedPlan??=plannedStep;
         if(!rejectionHandled)plan.reject?.({error,input:planInput,observation,step:plannedStep});
         const recoveryAllowed=!couponOperationStarted&&autoRepair&&canRecover(error,session,{signal,attempts:repairs});
         emit('动态步骤失败',{step:index+1,observationId:observation.observationId,url:observation.url,durationMs:Date.now()-stepStarted,error:diagnosticError(error),pendingVerification,recovery:{enabled:autoRepair,allowed:recoveryAllowed,attempts:repairs,maxAttempts:2},transaction:{submissionStarted:!!session.submissionStarted,paymentStarted:!!session.paymentStarted,receiptStatus:session.receipt?.status}});
         if(!recoveryAllowed){
-          if(!signal?.aborted&&!session.submissionStarted&&!session.paymentStarted&&(isPlanningUncertainty(error)||error.code==='AGENT_NEEDS_INPUT'))error.orderInput=inputForUncertainty(error,observation,{step:plannedStep,action:currentAction});
+          if(!signal?.aborted&&!session.submissionStarted&&!session.paymentStarted&&isPlanningUncertainty(error)&&!error.orderInput)error.userMessage=bindingFailure().message;
           throw error;
         }
         repairs++;const recovered=await recoveryContext(error,session,history,{signal,run:fn=>abortable(fn,signal),includeImage:repairs>1&&error.code==='AGENT_LOW_CONFIDENCE'});stagnant=0;queuedObservation=recovered.observation;

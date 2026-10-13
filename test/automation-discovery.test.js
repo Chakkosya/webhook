@@ -19,7 +19,7 @@ test('模型索要未来页面时进入浏览器探索修复，而不交给用�
 test('实际结算证据缺失、购物车待核验或已提交订单仍停止，不放宽验证',async()=>{
   const planner=createPlanner(async()=>({action:'stop',reason:refusal}));
   for(const current of [input({...observation,title:'Checkout'}),input(observation,{pendingVerification:'cart'}),input(observation,{submissionStarted:true}),input({...observation,elements:[]})]){
-    const result=await planner(current);assert.equal(result.action,'stop');
+    await assert.rejects(planner(current),error=>error.code==='AGENT_PLAN_INVALID'&&!error.orderInput);
   }
   assert.equal(isFuturePageEvidenceRefusal('Multiple products match, cannot identify the target'),false);
 });

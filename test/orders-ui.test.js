@@ -44,3 +44,23 @@ test('saved internal format errors no longer ask the user to repair technical fi
   const html=context.orderValidationReport(task)+context.orderTaskError(task);
   assert.doesNotMatch(html,/name|value|需要你确认|回答上面|order-clarification-answer|generation|needs_input/);assert.match(html,/购买方案暂时未能整理完成/);assert.match(html,/购买要求已保留/);
 });
+
+
+test('old generic binding questions show the saved product and a retry without an answer box',()=>{
+  const context=vm.createContext({window:{addEventListener(){}},document:{addEventListener(){}},escapeHtml:value=>String(value??'').replaceAll('<','&lt;')});
+  vm.runInContext(source,context);
+  for(const errorCode of ['AGENT_NEEDS_INPUT','AGENT_BINDING_FAILED']){
+    const task={status:'needs_validation',product:'Product <A>',errorCode,error:'当前步骤的动态绑定仍不确定，需要你确认。',input:{question:'请确认当前步骤应操作哪个商品、配置项或入口。',reason:'当前步骤的动态绑定仍不确定，需要你确认。'}};
+    const html=context.orderValidationReport(task)+context.orderTaskError(task);
+    assert.match(html,/已填写的商品：Product &lt;A>/);assert.match(html,/无需重复填写/);
+    assert.doesNotMatch(html,/需要你确认|动态绑定|order-clarification-answer|回答上面/);
+  }
+});
+
+test('choosing a concrete option saves that answer and starts preparation with one click',async()=>{
+  let handler,continued=0;const answer={value:''};
+  const button={disabled:false,hasAttribute:name=>name==='data-order-clarification-choice',dataset:{orderClarificationChoice:'东京'},closest:()=>({querySelector:()=>({click:()=>continued++})})};
+  const context=vm.createContext({window:{addEventListener(){}},document:{addEventListener(type,listener){if(type==='click')handler=listener;}},$:selector=>selector==='#order-clarification-answer'?answer:{}});
+  vm.runInContext(source,context);await handler({target:{closest:()=>button}});
+  assert.equal(answer.value,'东京');assert.equal(continued,1);
+});

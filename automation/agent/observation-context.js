@@ -1,3 +1,4 @@
+import {productContext} from './product-binding.js';
 const normalize=value=>String(value??'').normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
 const interactive=new Set(['link','button','textbox','spinbutton','combobox','checkbox','radio']);
 const MAX_ELEMENTS=96,MAX_CHARS=24000,MAX_OPTIONS=16;
@@ -16,7 +17,7 @@ function excerpt(value,limit,terms){
 const scoreText=(value,terms)=>terms.reduce((score,term)=>score+(normalize(value).includes(term)?Math.min(term.length,12):0),0);
 function compactElement(el,terms,maxOptions){
   const result={ref:el.ref};
-  for(const key of ['tag','role','type','visible','disabled','readOnly','checked','formRef','parentRef','regionRef'])if(nonempty(el[key]))result[key]=el[key];
+  for(const key of ['tag','role','type','visible','disabled','readOnly','required','checked','formRef','parentRef','regionRef'])if(nonempty(el[key]))result[key]=el[key];
   const seen=new Set();
   for(const key of ['accessibleName','label','text','placeholder']){
     const value=excerpt(el[key],240,terms),identity=normalize(value);
@@ -40,7 +41,8 @@ function compactElement(el,terms,maxOptions){
 export function planningObservation(page,input={}){
   const expanded=input.expanded===true;
   const maxElements=expanded?288:MAX_ELEMENTS,maxChars=expanded?64000:MAX_CHARS,maxOptions=expanded?80:MAX_OPTIONS;
-  const terms=termsFor(input),all=(page.elements||[]).filter(el=>el.type!=='password'),focusRefs=new Set(input.focusRefs||[]);
+  const terms=termsFor(input),all=(page.elements||[]).filter(el=>el.type!=='password'),focusRefs=new Set(input.focusRefs||[]),product=productContext(page,input.order);
+  for(const ref of product?.refs||[])focusRefs.add(ref);
   const ownScore=el=>scoreText([el.accessibleName,el.label,el.text,el.name].filter(Boolean).join(' '),terms);
   const relatedRegions=new Set(all.filter(el=>focusRefs.has(el.ref)||ownScore(el)>0).map(el=>el.regionRef).filter(Boolean));
   const relatedForms=new Set(all.filter(el=>focusRefs.has(el.ref)||ownScore(el)>0).map(el=>el.formRef).filter(Boolean));
@@ -54,7 +56,7 @@ export function planningObservation(page,input={}){
     return {el,index,score,related:focusRefs.has(el.ref)||own>0||relatedRegions.has(el.regionRef)||relatedForms.has(el.formRef)||activeForms.has(el.formRef)};
   }).sort((a,b)=>b.score-a.score||a.index-b.index);
   const contexts={},contextIds=new Map(),elements=[];
-  const result={observationId:page.observationId,url:page.url,title:excerpt(page.title,300,terms),text:excerpt(page.text,1400,terms),elements,contexts,forms:[],totalElements:page.totalElements??all.length,coverage:{selected:0,omitted:0,omittedRelevant:0,complete:false}};
+  const result={observationId:page.observationId,url:page.url,title:excerpt(page.title,300,terms),text:excerpt(page.text,1400,terms),elements,contexts,forms:[],totalElements:page.totalElements??all.length,coverage:{selected:0,omitted:0,omittedRelevant:0,complete:false},...(product?{targetProduct:product}:{})};
   if(String(result.url||'').length>1400){result.url=String(result.url).slice(0,1400);result.urlOmitted=true;}
   if(page.frontend)result.frontend={untrusted:true,verified:false,source:page.frontend.source,scripts:(page.frontend.scripts||[]).slice(0,4).map(script=>({source:String(script.source||'').slice(0,300),operations:(script.operations||[]).slice(0,16),status:'candidate_only'}))};
   // Keep each region's headings, controls and key specification text together.
@@ -99,6 +101,7 @@ export function planningObservation(page,input={}){
   }
   const relationships=()=>{
     const refs=new Set(elements.map(el=>el.ref)),selectedForms=new Set(elements.map(el=>el.formRef).filter(Boolean)),usedContexts=new Set(elements.map(el=>el.contextRef).filter(Boolean));
+    if(product)result.targetProduct={...product,binding:refs.has(product.binding?.ref)?product.binding:undefined,refs:product.refs.filter(ref=>refs.has(ref)),evidenceOmitted:product.refs.some(ref=>!refs.has(ref))};
     for(const key of Object.keys(contexts))if(!usedContexts.has(key))delete contexts[key];
     result.forms=(page.forms||[]).filter(form=>selectedForms.has(form.ref)||refs.has(form.ref)).map(form=>({ref:form.ref,method:form.method,action:String(form.action??'').slice(0,600),fields:(form.fields||[]).filter(ref=>refs.has(ref)),omittedFields:(form.fields||[]).filter(ref=>!refs.has(ref)).length}));
     result.coverage={selected:elements.length,omitted:all.length-elements.length,omittedRelevant:candidates.filter(item=>item.related&&!refs.has(item.el.ref)).length,complete:elements.length===all.length&&!elements.some(el=>el.optionsOmitted),selection:'current_task_and_region_relationships',limits:{elements:maxElements,characters:maxChars,optionsPerControl:maxOptions}};
