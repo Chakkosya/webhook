@@ -10,10 +10,11 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
     DATA_DIR=/app/.data \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright \
     MONITOR_BROWSER_EXECUTABLE=/usr/bin/chromium \
     MONITOR_SS_EXECUTABLE=/usr/local/bin/sslocal
 
-RUN apt-get update && apt-get install -y --no-install-recommends chromium xvfb xauth fonts-noto-cjk ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb xauth fonts-noto-cjk ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=shadowsocks /usr/bin/sslocal /usr/local/bin/sslocal
@@ -22,7 +23,13 @@ RUN /usr/local/bin/sslocal --version
 
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+# Keep Chromium matched to the Playwright version in package-lock.json.
+RUN npm ci --omit=dev --ignore-scripts \
+    && node node_modules/playwright-core/cli.js install --with-deps --no-shell chromium \
+    && node --input-type=module -e "import {symlinkSync} from 'node:fs'; import {chromium} from 'playwright-core'; symlinkSync(chromium.executablePath(), '/usr/bin/chromium');" \
+    && chmod -R a+rX /opt/playwright \
+    && npm cache clean --force \
+    && rm -rf /var/lib/apt/lists/*
 COPY --chown=node:node server.js ./
 COPY --chown=node:node lib ./lib
 COPY --chown=node:node automation ./automation
