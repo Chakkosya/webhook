@@ -165,7 +165,7 @@ try{
   const run=async()=>{
     const finished=page.waitForResponse(response=>/\/api\/order-tasks\/[^/]+\/run$/.test(new URL(response.url()).pathname)&&response.request().method()==='POST',{timeout:90000});
     await page.locator('[data-order-editor-action="run"]').click();const response=await finished;assert.equal(response.status(),200);const task=(await response.json()).task;
-    if(task.status==='needs_validation'){assert.equal(task.result,null);assert.equal(task.approvedHash,null);assert.equal(task.submissionStartedAt,undefined);await page.locator('[data-order-editor-action="generate"]').waitFor();assert.match(await page.locator('.order-validation').innerText(),/没有发送订单/);}
+    if(task.status==='needs_validation'){assert.equal(task.result,null);assert.equal(task.approvedHash,null);assert.equal(task.submissionStartedAt,undefined);await page.locator('[data-order-editor-action="generate"]').waitFor();assert.match(await page.locator('.order-validation').innerText(),/没有提交订单/);}
     else await page.locator('[data-order-editor-action="new"]').waitFor({timeout:90000});
     console.log('PASS execution outcome: '+task.label+' → '+task.status);
   };
