@@ -113,7 +113,7 @@ try{
  browser=await createOrderBrowser({url:base+'/product',dryRun:true,executionMode:'pay'},{storageState:saved.state});
  await assert.rejects(browser.methods.click('#unverified'),error=>error.code==='ORDER_REQUEST_BLOCKED'&&/POST \/pay/.test(error.message));await browser.close();browser=null;
  browser=await createOrderBrowser({url:base+'/unsafe-cart'},{storageState:saved.state});
- await assert.rejects(browser.methods.cart('#cart'),error=>['ORDER_REQUEST_BLOCKED','AGENT_NEEDS_INPUT'].includes(error.code));await browser.close();browser=null;
+ await assert.rejects(browser.methods.cart('#cart'),error=>error.code==='ORDER_CART_UNVERIFIED'&&Boolean(error.orderInput));await browser.close();browser=null;
  assert.equal(requests.filter(r=>r.method==='POST').length,backgroundPosts);
  console.log('PASS direct financial navigation, AI-triggered payment and a disguised checkout cart remain blocked');
 }finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}
