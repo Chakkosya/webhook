@@ -38,7 +38,7 @@ test('challenge solving preserves trial boundaries, clearance sessions and human
       try{
         const result=await runCommerceAgent({summary:'Trial',workflow:{version:2,requirements:[]}},task,browser,{plan:async({observation})=>{
           assert.ok(!JSON.stringify(observation).includes(secret));
-          const bind=predicate=>{const field=observation.elements.find(predicate);assert.ok(field);return {meaning:'trial field',ref:field.ref,confidence:0.99};};
+          const bind=predicate=>{const field=observation.elements.find(predicate);assert.ok(field);return {meaning:'trial_field',ref:field.ref,confidence:0.99};};
           return {action:'review',reason:'Review dry-run',bindings:{submit:bind(el=>el.tag==='button'),product:bind(el=>el.tag==='h1'),quantity:bind(el=>el.name==='quantity'),total:bind(el=>el.id==='total'),currency:bind(el=>el.id==='currency')}};
         }});
         assert.equal(result.status,'prepared');assert.equal(browser.submissionStarted,false);assert.equal(browser.paymentStarted,false);assert.equal(writes,0);

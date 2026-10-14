@@ -37,17 +37,17 @@ test('local merchant: catalog, configuration, actual pricing, split orders and o
     const input=JSON.parse(messages.at(-1).content);if(!input.page)return {summary:'Monthly 64G product',workflow:{version:2,requirements:[{name:'Cycle',value:'Monthly'}]}};
     const page=input.page,path=new URL(page.url).pathname;
     const bind=(meaning,match)=>{const el=page.elements.filter(match);assert.equal(el.length,1,meaning+' '+path);return {meaning,ref:el[0].ref,confidence:0.93};};
-    if(path==='/store')return {action:'click',reason:'Available 64G variant matches the requested product',target:bind('Order Now link for the available DS.CN.HK.BGP.V2 64G variant',el=>el.href==='/configure?variant=64')};
+    if(path==='/store')return {action:'click',reason:'Available 64G variant matches the requested product',target:bind('purchase_entry',el=>el.href==='/configure?variant=64')};
     if(path==='/configure'){
-      const quantity=bind('商品数量',el=>el.name==='quantity'),cycle=bind('Monthly billing cycle',el=>el.name==='cycle');
-      return {steps:[{action:'fill',reason:'Use requested quantity',target:quantity,valueFrom:'quantity'},{action:'select',reason:'Use requested cycle',target:cycle,valueFrom:{requirement:'Cycle'}},{action:'configure',reason:'Continue current product',target:bind('继续当前配置',el=>el.tag==='button'),bindings:{product:bind('商品名称',el=>el.tag==='h1'),quantity},configuration:[{name:'Cycle',target:cycle}]}]};
+      const quantity=bind('quantity',el=>el.name==='quantity'),cycle=bind('billing_cycle',el=>el.name==='cycle');
+      return {steps:[{action:'fill',reason:'Use requested quantity',target:quantity,valueFrom:'quantity'},{action:'select',reason:'Use requested cycle',target:cycle,valueFrom:{requirement:'Cycle'}},{action:'configure',reason:'Continue current product',target:bind('continue_to_cart',el=>el.tag==='button'),bindings:{product:bind('product',el=>el.tag==='h1'),quantity},configuration:[{name:'Cycle',target:cycle}]}]};
     }
-    if(path==='/create')return {action:'invoice',reason:'Open the current order invoice',target:bind('当前订单账单',el=>el.role==='link')};
-    if(path==='/invoice')return {action:'pay',reason:'Pay original invoice using balance',bindings:{pay:bind('账户余额付款',el=>el.tag==='button'),invoice:bind('账单编号',el=>el.name==='invoiceid'),...Object.fromEntries(['total','currency','balance'].map(key=>[key,bind(key,el=>el.id===key)])),balanceCurrency:bind('余额币种',el=>el.id==='balance-currency')}};
-    const bindings={submit:bind('提交订单',el=>el.tag==='button'&&(el.text||el.accessibleName)==='Place order'),product:bind('商品名称',el=>el.tag==='h1'),...Object.fromEntries(['quantity','total','currency'].map(key=>[key,bind(key,el=>el.id===key)]))};
-    if(input.order.couponCode)Object.assign(bindings,{input:bind('优惠输入',el=>el.name==='coupon'),apply:bind('应用优惠',el=>el.tag==='button'&&(el.text||el.accessibleName)==='Apply coupon'),appliedCode:bind('优惠回显',el=>el.id==='applied'),discount:bind('实际减免',el=>el.id==='discount')});
+    if(path==='/create')return {action:'invoice',reason:'Open the current order invoice',target:bind('invoice',el=>el.role==='link')};
+    if(path==='/invoice')return {action:'pay',reason:'Pay original invoice using balance',bindings:{pay:bind('pay_balance',el=>el.tag==='button'),invoice:bind('invoice_id',el=>el.name==='invoiceid'),...Object.fromEntries(['total','currency','balance'].map(key=>[key,bind(key,el=>el.id===key)])),balanceCurrency:bind('balance_currency',el=>el.id==='balance-currency')}};
+    const bindings={submit:bind('submit_order',el=>el.tag==='button'&&(el.text||el.accessibleName)==='Place order'),product:bind('product',el=>el.tag==='h1'),...Object.fromEntries(['quantity','total','currency'].map(key=>[key,bind(key,el=>el.id===key)]))};
+    if(input.order.couponCode)Object.assign(bindings,{input:bind('coupon_input',el=>el.name==='coupon'),apply:bind('apply_coupon',el=>el.tag==='button'&&(el.text||el.accessibleName)==='Apply coupon'),appliedCode:bind('applied_coupon',el=>el.id==='applied'),discount:bind('discount',el=>el.id==='discount')});
     const action=input.context.pendingVerification==='coupon'?'verify_coupon':input.order.couponCode&&!input.context.couponApplied?'apply_coupon':'review';
-    return {action,reason:'Verify current product and final total',bindings,configuration:[{name:'Cycle',target:bind('月付方案',el=>el.id==='cycle-proof')}]};
+    return {action,reason:'Verify current product and final total',bindings,configuration:[{name:'Cycle',target:bind('billing_cycle_proof',el=>el.id==='cycle-proof')}]};
   };
   try{
     for(const config of [

@@ -38,8 +38,8 @@ test('WHMCS configuration quotes, AJAX continuation, coupons and checkout',{skip
     const input=JSON.parse(messages.at(-1).content);if(!input.page)return {summary:'Use the default product configuration',workflow:{version:2,requirements:[]}};
     const page=input.page,action=new URL(page.url).searchParams.get('a');
     const bind=(meaning,predicate)=>{const el=page.elements.filter(predicate);assert.equal(el.length,1,meaning);return {meaning,ref:el[0].ref,confidence:0.99};};
-    if(action==='confproduct')return {action:'configure',reason:'Keep the current product defaults and continue',target:bind('Continue',el=>el.id==='continue'),bindings:{product:bind('Product',el=>el.tag==='h1')}};
-    const bindings={submit:bind('Submit',el=>el.id==='submit'),product:bind('Product',el=>el.id==='product'),quantity:bind('Quantity',el=>el.id==='quantity'),total:bind('Total',el=>el.id==='total'),currency:bind('Currency',el=>el.id==='currency'),input:bind('Coupon',el=>el.id==='coupon'),apply:bind('Apply',el=>el.id==='apply'),appliedCode:bind('Applied coupon',el=>el.id==='applied'),discount:bind('Discount',el=>el.id==='discount')};
+    if(action==='confproduct')return {action:'configure',reason:'Keep the current product defaults and continue',target:bind('continue',el=>el.id==='continue'),bindings:{product:bind('product',el=>el.tag==='h1')}};
+    const bindings={submit:bind('submit',el=>el.id==='submit'),product:bind('product',el=>el.id==='product'),quantity:bind('quantity',el=>el.id==='quantity'),total:bind('total',el=>el.id==='total'),currency:bind('currency',el=>el.id==='currency'),input:bind('coupon',el=>el.id==='coupon'),apply:bind('apply',el=>el.id==='apply'),appliedCode:bind('applied_coupon',el=>el.id==='applied'),discount:bind('discount',el=>el.id==='discount')};
     return {action:input.context.pendingVerification==='coupon'?'verify_coupon':input.context.couponApplied?'review':'apply_coupon',reason:'Check the current product and discounted amount',bindings};
   };
   try{

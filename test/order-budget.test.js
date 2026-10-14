@@ -17,7 +17,7 @@ function fixture({quantity=3,maxTotal=100,limit=10,price=q=>q*10,mode='submit',u
   };
   const service=createOrderService({persist:()=>{},siteMemory:{read:async()=>null,record:async()=>{}},requestAI:async(_user,messages)=>{
     const input=JSON.parse(messages.at(-1).content);if(!input.page)return {summary:'Purchase product',workflow:{version:2,requirements:[]}};
-    const target=i=>({ref:'e'+i,meaning:'当前 '+i+' 控件',confidence:0.93});
+    const target=i=>({ref:'e'+i,meaning:'field_'+i,confidence:0.93});
     return input.context.submissionStarted?{action:'pay',reason:'Pay confirmed original invoice',bindings:{pay:target(0),invoice:target(1),total:target(3),currency:target(4)}}:{action:'review',reason:'Check current order',bindings:{submit:target(0),product:target(1),quantity:target(2),total:target(3),currency:target(4)}};
   },openBrowser:async(current,options)=>{
     attempts.push({id:current.id,quantity:current.quantity,budget:current.maxTotal,currency:current.currency});if(hold)await new Promise(resolve=>gates.push(resolve));
@@ -39,10 +39,10 @@ function fixture({quantity=3,maxTotal=100,limit=10,price=q=>q*10,mode='submit',u
   const task=add();return {user,task,service,orders,attempts,gates,add,get payments(){return payments;},async execute(t=task){service.approve(user,t);return service.execute(user,t);}};
 }
 
-test('original VMISS action accepts descriptive meaning and keeps ref/confidence validation',()=>{
-  const target={meaning:'Order Now link for the available DS.CN.HK.BGP.V2 64G variant',ref:'e201',confidence:0.93};
-  assert.deepEqual(validateTarget(target),target);assert.equal(validateTarget({...target,meaning:'购买 DS.CN.HK.BGP.V2（64G）'}).ref,'e201');
-  for(const bad of [{ref:'old-ref'},{confidence:0.4},{meaning:''},{meaning:'x'.repeat(301)}])assert.throws(()=>validateTarget({...target,...bad}));
+test('VMISS action requires snake_case meaning and keeps ref/confidence validation',()=>{
+  const target={meaning:'purchase_entry',ref:'e201',confidence:0.93};
+  assert.deepEqual(validateTarget(target),target);
+  for(const bad of [{ref:'old-ref'},{ref:201},{confidence:0.4},{meaning:''},{meaning:'购买入口'},{meaning:'Order Now'},{meaning:'continue__to_cart'},{meaning:'x'.repeat(301)}])assert.throws(()=>validateTarget({...target,...bad}));
   assert.equal(diagnosticAIOutput({steps:[{action:'click',target}]}).steps[0].target.ref,'e201');
 });
 test('catalog product cards outrank a Shopping Cart title and navigation',()=>{
