@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createBrowserSlots} from '../lib/browser-slots.js';
+import {createBrowserSlots,readBrowserSlotLimits} from '../lib/browser-slots.js';
+test('浏览器并发环境参数使用正整数，非法值回退',()=>{
+ assert.deepEqual(readBrowserSlotLimits({}),{max:4,backgroundMax:2,verificationMax:1});
+ assert.deepEqual(readBrowserSlotLimits({BROWSER_MAX_SLOTS:'8',BROWSER_BACKGROUND_MAX:'3',BROWSER_VERIFY_MAX:'2'}),{max:8,backgroundMax:3,verificationMax:2});
+ for(const value of ['0','-1','1.5','Infinity','abc',''])assert.deepEqual(readBrowserSlotLimits({BROWSER_MAX_SLOTS:value,BROWSER_BACKGROUND_MAX:value,BROWSER_VERIFY_MAX:value}),{max:4,backgroundMax:2,verificationMax:1});
+ const slots=createBrowserSlots({max:3,verificationMax:2}),a=slots.acquire(false,{verification:true}),b=slots.acquire(false,{verification:true});assert.throws(()=>slots.acquire(false,{verification:true}));a();b();
+});
+test('补货等待排在已排队的后台操作之前',async()=>{
+ const slots=createBrowserSlots({max:1,backgroundMax:1}),first=slots.acquire();first.closing();
+ const order=[],background=slots.acquireWhenClosing().then(release=>{order.push('background');return release;}),restock=slots.acquireWhenClosing(true,{priority:true}).then(release=>{order.push('restock');release.closing();return release;});
+ first();const release=await restock;assert.deepEqual(order,['restock']);release();(await background)();assert.deepEqual(order,['restock','background']);assert.equal(slots.active,0);
+});
 test('交互浏览器有上限并为触发下单保留容量，释放幂等',()=>{
  const slots=createBrowserSlots(),a=slots.acquire(),b=slots.acquire();
  assert.throws(()=>slots.acquire(),error=>error.code==='ORDER_BROWSER_BUSY');

@@ -2,7 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {setTimeout as delay} from 'node:timers/promises';
-import {requestOrderAI,readOrderTimeouts,DEFAULT_ORDER_TIMEOUTS} from '../lib/order-timeouts.js';
+import {requestOrderAI,readOrderTimeouts,getOrderTimeouts,DEFAULT_ORDER_TIMEOUTS} from '../lib/order-timeouts.js';
+test('普通与补货使用独立预算，补货环境参数沿用上限',()=>{
+ const normal=getOrderTimeouts('manual',{}),restock=getOrderTimeouts('restock',{});
+ assert.equal(normal.aiTimeoutMs,120000);assert.equal(normal.agentTimeoutMs,600000);assert.equal(normal.aiRetries,1);assert.equal(normal.probeTimeoutMs,3000);
+ assert.equal(normal.couponVerificationTimeoutMs,12000);assert.equal(normal.loginVerificationTimeoutMs,12000);
+ assert.equal(restock.aiTimeoutMs,180000);assert.equal(restock.agentTimeoutMs,1800000);assert.equal(restock.aiRetries,2);assert.equal(restock.probeTimeoutMs,10000);
+ assert.equal(restock.couponVerificationTimeoutMs,30000);assert.equal(restock.loginVerificationTimeoutMs,30000);assert.equal(restock.pageTimeoutMs,60000);assert.equal(restock.navigationTimeoutMs,120000);assert.equal(restock.submitRequestTimeoutMs,20000);assert.equal(restock.submitResponseTimeoutMs,120000);assert.equal(restock.redirectTimeoutMs,120000);
+ assert.equal(getOrderTimeouts('restock',{ORDER_RESTOCK_AI_TIMEOUT_MS:'300001'}).aiTimeoutMs,180000);assert.equal(getOrderTimeouts('restock',{ORDER_RESTOCK_AGENT_TIMEOUT_MS:'1800001'}).agentTimeoutMs,1800000);
+ assert.equal(getOrderTimeouts('restock',{ORDER_RESTOCK_AI_TIMEOUT_MS:'220000'}).aiTimeoutMs,220000);
+});
+test('AI 瞬态失败按触发类型限次重试并记录原因及指数退避',async()=>{
+ for(const failure of [{status:429},{statusCode:503},{responseStatus:502},{code:'ECONNRESET'},{cause:{code:'UND_ERR_SOCKET'}}]){
+  let calls=0;const events=[];
+  await assert.rejects(requestOrderAI(async()=>{calls++;throw Object.assign(new Error('upstream failure'),failure);},{},[],{trigger:'restock',retryDelayMs:1,onEvent:(action,data)=>events.push({action,...data})}),/upstream failure/);
+  assert.equal(calls,3);const retries=events.filter(event=>event.nextAttempt);assert.deepEqual(retries.map(event=>event.retryDelayMs),[1,2]);assert.ok(retries.every(event=>event.retryReason));
+ }
+ let calls=0;await assert.rejects(requestOrderAI(async()=>{calls++;throw Object.assign(new Error('HTTP 503'),{status:503});},{},[],{retryDelayMs:1}));assert.equal(calls,2);
+ let unauthorized=0;await assert.rejects(requestOrderAI(async()=>{unauthorized++;throw Object.assign(new Error('timeout HTTP 401'),{status:401});},{},[],{trigger:'restock',retryDelayMs:1}),/401/);assert.equal(unauthorized,1);
+});
 import {createOrderService,validateOrderTask,validateOrderProgram} from '../lib/orders.js';
 import {runCommerceAgent} from '../automation/agent/executor.js';
 import {BUSINESS_PROMPT} from '../automation/agent/planner.js';
@@ -10,7 +28,7 @@ import {nativeRequestContract} from '../lib/order-contract.js';
 
 test('超时预算有明确默认值，部署配置限制范围',()=>{
   assert.deepEqual(readOrderTimeouts({}),DEFAULT_ORDER_TIMEOUTS);
-  assert.deepEqual(readOrderTimeouts({ORDER_AI_TIMEOUT_MS:'90000',ORDER_AGENT_TIMEOUT_MS:'900000',ORDER_TRIAL_TIMEOUT_MS:'1800000'}),{aiTimeoutMs:90000,agentTimeoutMs:900000,trialTimeoutMs:1800000});
+  assert.deepEqual(readOrderTimeouts({ORDER_AI_TIMEOUT_MS:'90000',ORDER_AGENT_TIMEOUT_MS:'900000',ORDER_TRIAL_TIMEOUT_MS:'1800000'}),{...DEFAULT_ORDER_TIMEOUTS,aiTimeoutMs:90000,agentTimeoutMs:900000,trialTimeoutMs:1800000});
   assert.equal(readOrderTimeouts({ORDER_AI_TIMEOUT_MS:'0',ORDER_AGENT_TIMEOUT_MS:'Infinity'}).agentTimeoutMs,DEFAULT_ORDER_TIMEOUTS.agentTimeoutMs);
 });
 test('AI 超时仅重试本次请求，迟到回复不能影响返回，且传入同一预算',async()=>{
@@ -73,10 +91,10 @@ test('明确启用重试时仅重试当前规划，仍只进行一次试跑',asy
   assert.equal(f.task.status,'ready');assert.equal(f.task.trial.preflightPasses,1);assert.equal(f.business,1);assert.equal(f.plans,2);assert.equal(f.reviews,1);assert.equal(f.closed,1);
   assert.equal(f.task.progress.stage,'试跑完成');assert.ok(f.user.orderExecutionLogs[0].events.some(event=>event.action==='AI 请求超时，重新请求'));
 });
-test('默认规划超时不重复请求并关闭浏览器，不重跑整个试跑',async()=>{
+test('默认规划超时重试当前请求一次并关闭浏览器，不重跑整个试跑',async()=>{
   const f=serviceFixture({timeouts:{aiTimeoutMs:25},plan:()=>new Promise(()=>{})});
   await assert.rejects(f.service.generate(f.user,f.task),{code:'ORDER_AI_TIMEOUT'});
-  assert.equal(f.business,1);assert.equal(f.plans,1);assert.equal(f.reviews,0);assert.equal(f.closed,1);assert.equal(f.task.errorCode,'ORDER_AI_TIMEOUT');assert.equal(f.service.isBusy(f.user,f.task),false);
+  assert.equal(f.business,1);assert.equal(f.plans,2);assert.equal(f.reviews,0);assert.equal(f.closed,1);assert.equal(f.task.errorCode,'ORDER_AI_TIMEOUT');assert.equal(f.service.isBusy(f.user,f.task),false);
   assert.equal(f.signals.at(-1).aborted,true);assert.equal(f.task.enabled,false);
 });
 test('全程试跑预算到期会中断规划，并保持原审批关闭',async()=>{

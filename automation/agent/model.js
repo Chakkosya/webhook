@@ -25,6 +25,7 @@ export function validateBusinessWorkflow(value){
   })};
 }
 export function validateTarget(value){
+  if(value&&typeof value==='object')value={...value,meaning:typeof value.meaning==='string'?value.meaning.trim():value.meaning,ref:typeof value.ref==='string'?value.ref.trim():value.ref};
   if(!value||typeof value.meaning!=='string'||!value.meaning.trim()||value.meaning.length>300||typeof value.ref!=='string'||!/^e\d+$/.test(value.ref)||!Number.isFinite(value.confidence)||value.confidence<0||value.confidence>1)
     throw agentError('AGENT_PLAN_INVALID','动作目标格式错误：meaning 使用不超过 300 字的文字说明，ref 使用当前页面元素编号，confidence 使用 0 到 1 的数字；请修正模型输出，不要询问用户。');
   if(value.confidence<0.8)throw agentError('AGENT_LOW_CONFIDENCE','当前动作依据不足，请结合已提供的商品、所在区域和当前控件重新绑定。');

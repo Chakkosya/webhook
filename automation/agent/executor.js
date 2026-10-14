@@ -2,10 +2,10 @@ import {quantityLimit,checkStockCapacity} from '../../lib/order-quantity.js';
 import {diagnosticError,diagnosticPage,diagnosticAIOutput,diagnosticReceipt} from '../../lib/order-execution-log.js';
 import {parseOrderQuantity,matchesProductSelection,matchesOrderConfiguration} from '../../lib/order-evidence.js';
 import {orderFailure} from '../../lib/order-diagnostics.js';
-import {DEFAULT_ORDER_TIMEOUTS,createOrderDeadline,abortable} from '../../lib/order-timeouts.js';
+import {DEFAULT_ORDER_TIMEOUTS,getOrderTimeouts,createOrderDeadline,abortable} from '../../lib/order-timeouts.js';
 import {validateStep} from './planner.js';
 import {agentError,validateTarget} from './model.js';
-import {canRecover,recoveryContext,isPlanningUncertainty} from './recovery.js';
+import {canRecover,recoveryContext,isPlanningUncertainty,recoveryKind} from './recovery.js';
 import {stopError} from './clarification.js';
 import {assertCartQuantityCorrection} from './flow-template.js';
 import {pageType} from '../adapters/generic-commerce.js';
@@ -13,20 +13,24 @@ const checkoutKeys={submit:'submitSelector',product:'productSelector',quantity:'
 const couponKeys={input:'inputSelector',apply:'applySelector',appliedCode:'appliedCodeSelector',discount:'discountSelector'};
 const paymentKeys={pay:'paySelector',invoice:'invoiceSelector',total:'totalSelector',currency:'currencySelector',balance:'balanceSelector',balanceCurrency:'balanceCurrencySelector',pending:'pendingSelector'};
 const normalize=value=>String(value).normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
-export async function runCommerceAgent(program,order,session,{plan,signal,memory=null,onEvent=()=>{},onLearn=async()=>{},maxSteps=40,timeoutMs=DEFAULT_ORDER_TIMEOUTS.agentTimeoutMs,autoRepair=true}={}){
+export async function runCommerceAgent(program,order,session,{plan,signal,memory=null,onEvent=()=>{},onLearn=async()=>{},maxSteps=40,timeoutMs=DEFAULT_ORDER_TIMEOUTS.agentTimeoutMs,autoRepair=true,trigger='manual',probeTimeoutMs=getOrderTimeouts(trigger).probeTimeoutMs}={}){
   if(!plan||!session.methods.observe||!session.methods.resolveSemantic)throw agentError('AGENT_UNAVAILABLE',"浏览器缺少语义观察和动态规划能力");
   const emit=(action,data)=>{try{onEvent(action,data);}catch{/* Diagnostics must not change an execution result. */}};
   const budget=createOrderDeadline({signal,timeoutMs,code:'AGENT_BUDGET_EXCEEDED',stage:'动态页面探索'});signal=budget.signal;
   const methods=Object.fromEntries(Object.entries(session.methods).map(([name,method])=>[name,(...args)=>abortable(()=>method.apply(session.methods,args),signal)]));
   const planWithinBudget=input=>abortable(()=>plan({...input,signal}),signal),history=[],deadline=Date.now()+timeoutMs;
-  let repairs=0,pendingVerification=null,couponFailed=false,couponApplied=!order.couponCode,feedback=null,image=null,stage='observation',currentAction=null,lastState='',stagnant=0,queuedObservation=null,progressAfterStep=false;
+  const repairs={deterministic:0,transient:0},repairLimits={deterministic:2,transient:trigger==='restock'?5:3};
+  const recoveryBudget=error=>{const kind=recoveryKind(error);return {kind,attempts:repairs[kind],maxAttempts:repairLimits[kind]};};
+  let pendingVerification=null,couponFailed=false,couponApplied=!order.couponCode,feedback=null,image=null,stage='observation',currentAction=null,lastState='',stagnant=0,queuedObservation=null;
   const completed=new Set();
-  const resolve=async target=>{validateTarget(target);const located=await methods.resolveSemantic(target);emit('语义定位',{meaning:target.meaning,ref:target.ref,strategy:located.strategy,confidence:target.confidence,selector:located.selector,attempts:located.attempts});return located.selector;};
+  const resolve=async target=>{target=validateTarget(target);const located=await methods.resolveSemantic(target,{probeTimeoutMs,signal});emit('语义定位',{meaning:target.meaning,ref:target.ref,strategy:located.strategy,confidence:target.confidence,selector:located.selector,attempts:located.attempts});return located.selector;};
   const bind=async (bindings,map,required=Object.keys(map))=>{
     if(!bindings||required.some(key=>!bindings[key]))throw agentError('AGENT_PLAN_INVALID',"缺少当前页面核验字段："+required.join(','));
-    const result={};for(const [key,name]of Object.entries(map))if(bindings[key])result[name]=await resolve(bindings[key]);return result;
+    return Object.fromEntries(await Promise.all(Object.entries(map).filter(([key])=>bindings[key]).map(async([key,name])=>{
+      try{return [name,await resolve(bindings[key])];}catch(error){error.binding=key;error.message=key+'：'+error.message;throw error;}
+    })));
   };
-  const read=async target=>{validateTarget(target);return methods.readSemantic(target);};
+  const read=async target=>{target=validateTarget(target);return methods.readSemantic(target,{probeTimeoutMs,signal});};
   const productMatches=(expected,observed)=>methods.matchesProduct?methods.matchesProduct(expected,observed):matchesProductSelection(expected,observed);
   const verifyCart=async step=>{
     if(!step.bindings?.product||!step.bindings?.quantity)throw agentError('AGENT_STEP_UNVERIFIED','购物车缺少商品和数量证据');
@@ -59,11 +63,8 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
       try{
       stage='observation';currentAction=null;
       observation=queuedObservation||await methods.observe();queuedObservation=null;
+      if(methods.isObservationCurrent&&!await methods.isObservationCurrent({probeTimeoutMs,signal}))throw agentError('AGENT_OBSERVATION_STALE','当前页面观察已失效，请重新观察');
       const state=JSON.stringify([observation.url,observation.text,(observation.elements||[]).map(({text,value,checked,disabled})=>({text,value,checked,disabled}))]);
-      // A verified action followed by a changed page starts a new obstacle budget.
-      // Failed retries and waits on an unchanged page cannot replenish it.
-      if(progressAfterStep&&state!==lastState)repairs=0;
-      progressAfterStep=false;
       stagnant=state===lastState?stagnant+1:0;lastState=state;
       if(stagnant>=4)throw agentError('AGENT_NO_PROGRESS','同页连续无进展，请重新识别流程分支');
       stage='planning';
@@ -130,6 +131,7 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
                 const input={order,workflow:program.workflow,observation:page,history,memory,context:{pendingVerification:'coupon',couponApplied,receipt:session.receipt,submissionStarted:session.submissionStarted,paymentStarted:session.paymentStarted},feedback:rebindFeedback,image:rebindImage,signal};
                 planInput=input;observation=page;plannedStep=null;rejectionHandled=false;
                 try{
+                  if(methods.isObservationCurrent&&!await methods.isObservationCurrent({probeTimeoutMs,signal}))throw agentError('AGENT_OBSERVATION_STALE','当前页面观察已失效，请重新观察');
                   const next=validateStep(await planWithinBudget(input));plannedStep=next;couponRebind={step:next,input};
                   if(next.action==='stop')throw stopError(next,page,order,program.workflow);
                   if(next.action!=='verify_coupon')throw agentError('AGENT_STEP_UNVERIFIED','优惠请求后只能重新定位核验字段');
@@ -137,12 +139,14 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
                   return {coupon:await bind(next.bindings,couponKeys),checkout:await bind(next.bindings,checkoutKeys)};
                 }catch(error){
                   error.rejectedPlan??=plannedStep;
+                  if(error.code==='AGENT_OBSERVATION_STALE'&&canRecover(error,session,{signal,attempts:0})){rebindPage=await methods.observe();continue;}
                   plan.reject?.({error,input,observation:page,step:plannedStep});rejectionHandled=true;
-                  if(!autoRepair||!canRecover(error,session,{signal,attempts:repairs}))throw error;
-                  repairs++;const recovered=await recoveryContext(error,session,history,{signal,run:fn=>abortable(fn,signal),includeImage:repairs>1&&error.code==='AGENT_LOW_CONFIDENCE'});
+                  const retry=recoveryBudget(error);
+                  if(!autoRepair||!canRecover(error,session,{signal,...retry}))throw error;
+                  repairs[retry.kind]++;const recovered=await recoveryContext(error,session,history,{signal,run:fn=>abortable(fn,signal),includeImage:repairs[recoveryKind(error)]>1&&error.code==='AGENT_LOW_CONFIDENCE'});
                   rebindPage=recovered.observation;rebindFeedback=recovered.feedback;rebindImage=recovered.image;
                   history.push({action:'recover',pageType:pageType(rebindPage),meanings:[],verified:false});
-                  emit('重新观察并修复',{attempt:repairs,maxAttempts:2,evidenceId:rebindFeedback.evidenceId,url:rebindPage.url,observationId:rebindPage.observationId,error:rebindFeedback.error,pendingVerification:'coupon'});
+                  emit('重新观察并修复',{attempt:repairs[retry.kind],maxAttempts:retry.maxAttempts,kind:retry.kind,evidenceId:rebindFeedback.evidenceId,url:rebindPage.url,observationId:rebindPage.observationId,error:rebindFeedback.error,pendingVerification:'coupon'});
                 }
               }
             }
@@ -172,22 +176,23 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
           await onLearn({history,status:result.status});return result;
         }
         plan.remember?.({step,input:originalPlanInput});
-        progressAfterStep=!['wait','verify_cart'].includes(step.action);
         const entry={action:step.action,pageType:pageType(observation),meanings:[...(step.target?[step.target.meaning]:[]),...Object.values(step.bindings||{}).map(t=>t.meaning)],verified:true};
         history.push(entry);if(['verify_cart'].includes(step.action))completed.add(step.action);emit('动态步骤完成',{...entry,step:index+1,durationMs:Date.now()-stepStarted,pendingVerification,receipt:diagnosticReceipt(result)});
       }catch(error){
         error.rejectedPlan??=plannedStep;
+        if(error.code==='AGENT_OBSERVATION_STALE'&&!couponOperationStarted&&canRecover(error,session,{signal,attempts:0})){queuedObservation=await methods.observe();stagnant=0;continue;}
+        const retry=recoveryBudget(error);
         if(!rejectionHandled)plan.reject?.({error,input:planInput,observation,step:plannedStep});
-        const recoveryAllowed=!couponOperationStarted&&autoRepair&&canRecover(error,session,{signal,attempts:repairs});
-        emit('动态步骤失败',{step:index+1,observationId:observation.observationId,url:observation.url,durationMs:Date.now()-stepStarted,error:diagnosticError(error),rejectedPlan:diagnosticAIOutput(error.rejectedPlan),evidence:diagnosticPage({...observation,controls:(observation.elements||[]).filter(el=>JSON.stringify(error.rejectedPlan||{}).includes('"'+el.ref+'"'))},{semantics:true}),pendingVerification,recovery:{enabled:autoRepair,allowed:recoveryAllowed,attempts:repairs,maxAttempts:2},transaction:{submissionStarted:!!session.submissionStarted,paymentStarted:!!session.paymentStarted,receiptStatus:session.receipt?.status}});
+        const recoveryAllowed=!couponOperationStarted&&autoRepair&&canRecover(error,session,{signal,...retry});
+        emit('动态步骤失败',{step:index+1,observationId:observation.observationId,url:observation.url,durationMs:Date.now()-stepStarted,error:diagnosticError(error),rejectedPlan:diagnosticAIOutput(error.rejectedPlan),evidence:diagnosticPage({...observation,controls:(observation.elements||[]).filter(el=>JSON.stringify(error.rejectedPlan||{}).includes('"'+el.ref+'"'))},{semantics:true}),pendingVerification,recovery:{enabled:autoRepair,allowed:recoveryAllowed,attempts:retry.attempts,maxAttempts:retry.maxAttempts,kind:retry.kind},transaction:{submissionStarted:!!session.submissionStarted,paymentStarted:!!session.paymentStarted,receiptStatus:session.receipt?.status}});
         if(!recoveryAllowed){
           if(!signal?.aborted&&!session.submissionStarted&&!session.paymentStarted&&isPlanningUncertainty(error)&&!error.orderInput)error.userMessage=error.message;
           throw error;
         }
-        repairs++;const recovered=await recoveryContext(error,session,history,{signal,run:fn=>abortable(fn,signal),includeImage:repairs>1&&error.code==='AGENT_LOW_CONFIDENCE'});stagnant=0;queuedObservation=recovered.observation;
+        repairs[retry.kind]++;const recovered=await recoveryContext(error,session,history,{signal,run:fn=>abortable(fn,signal),includeImage:repairs[recoveryKind(error)]>1&&error.code==='AGENT_LOW_CONFIDENCE'});stagnant=0;queuedObservation=recovered.observation;
         await onLearn({history:[...history,{action:'recover',pageType:pageType(observation),meanings:[],verified:false}],status:'recovery',error});
         feedback=recovered.feedback;image=recovered.image;history.push({action:'recover',pageType:pageType(recovered.observation),meanings:[],verified:false});
-        emit('重新观察并修复',{attempt:repairs,maxAttempts:2,evidenceId:feedback.evidenceId,url:feedback.url,observationId:recovered.observation.observationId,error:feedback.error,historySteps:history.length,pendingVerification});
+        emit('重新观察并修复',{attempt:repairs[retry.kind],maxAttempts:retry.maxAttempts,kind:retry.kind,evidenceId:feedback.evidenceId,url:feedback.url,observationId:recovered.observation.observationId,error:feedback.error,historySteps:history.length,pendingVerification});
       }
     }
     throw agentError('AGENT_BUDGET_EXCEEDED',"动态执行达到最大操作数");

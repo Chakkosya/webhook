@@ -31,7 +31,7 @@ test('下单配置拒绝无限预算、无效数量、带凭据的 URL；付款�
 const business={summary:'核对当前购买要求',workflow:{version:2,requirements:[]}};
 const semanticTarget=(meaning,index)=>({meaning,ref:'e'+index,confidence:0.95});
 const reviewStep=()=>({action:'review',reason:'Check the observed order',bindings:Object.fromEntries(['submit','product','quantity','total','currency'].map((key,i)=>[key,semanticTarget(key,i)]))});
-function fixture({uncertain=false,fake=false,pay=false,paymentFailure=false,paymentUnknown=false,insufficientBalance=false,paymentStructure=false,assistanceCode=null,trialAuthError=null,generatedProgram=null,stock=false,structureFailure=null,quantity='1',accountState=null,persistError=null}={}){
+function fixture({uncertain=false,fake=false,pay=false,paymentFailure=false,paymentUnknown=false,insufficientBalance=false,paymentStructure=false,assistanceCode=null,trialAuthError=null,generatedProgram=null,stock=false,structureFailure=null,quantity='1',accountState=null,persistError=null,serviceOptions={}}={}){
   const task=validateOrderTask({...input,...(generatedProgram?{instruction:'核对当前购买要求'}:{}),executionMode:pay?'pay':input.executionMode}),user={id:'user-a',orderAccounts:[{monitorId:'monitor-a',loginUrl:input.url,revision:1,status:'saved',session:{state:{cookies:[],origins:[]},check:{url:input.url}}}],monitors:[{id:'monitor-a',kind:'webpage'}],orderTasks:[task]};
   let generated=0,commits=0,writes=0,payments=0,loginError=null,missingPayment=paymentStructure,opened=0,failOnce=true,filled=0;
   const service=createOrderService({persist:()=>{if(persistError?.(user))throw new Error('会话写入失败');writes++;},requestAI:async(_user,messages)=>{
@@ -71,7 +71,7 @@ function fixture({uncertain=false,fake=false,pay=false,paymentFailure=false,paym
         session.receipt={...session.receipt,status:'paid',invoiceId:'42',payment:{total:10,currency:'USD'}};return session.receipt;
       }
     }};return session;
-  }});
+  },...serviceOptions});
   return {service,task,user,setLoginError(error){loginError=error;},setStock(value){stock=value;},get generated(){return generated;},get commits(){return commits;},get payments(){return payments;},get writes(){return writes;},get opened(){return opened;},get filled(){return filled;}};
 }
 
@@ -248,9 +248,10 @@ test('触发时仍缺货则继续等待，下一次补货直接尝试下单',asy
   const f=fixture({stock:true});f.service.approve(f.user,f.task);
   await f.service.trigger(f.user,f.user.monitors[0]);
   assert.equal(f.task.status,'waiting_stock');assert.equal(f.task.enabled,true);assert.equal(f.task.result,null);assert.equal(f.commits,0);assert.equal(f.opened,1);
-  f.service.recover([f.user]);assert.equal(f.task.enabled,true);
+  assert.equal(f.task.restockRetry.state,'active');
   f.setStock(false);await f.service.trigger(f.user,f.user.monitors[0]);
-  assert.equal(f.task.status,'ordered',f.task.error);assert.equal(f.commits,1);assert.equal(f.opened,2);assert.equal(f.task.trial,null);
+  assert.equal(f.task.status,'ordered',f.task.error);assert.equal(f.commits,1);assert.equal(f.opened,3);assert.equal(f.task.trial,null);
+  assert.equal(f.task.restockRetry.state,'completed');assert.equal(f.task.restockRetry.merchantNote,'未核验商家后台');
 });
 
 test('等待补货授权直接执行当前流程，不在触发时另跑一次预检',async()=>{
@@ -277,4 +278,29 @@ test('无试跑下单结果未知时保留记录，后续触发不重复提交',
   const f=fixture({uncertain:true});f.service.approve(f.user,f.task);
   await f.service.trigger(f.user,f.user.monitors[0]);await f.service.trigger(f.user,f.user.monitors[0]);
   assert.equal(f.task.status,'uncertain');assert.equal(f.commits,1);assert.equal(f.opened,1);assert.equal(f.task.enabled,false);
+});
+
+test('决战失败立即通知并定时重试，暂停后不再运行',async()=>{
+  let timer,notifications=0;
+  const f=fixture({stock:true,serviceOptions:{notify:async(_user,task)=>{notifications++;assert.equal(task.restockRetry.state,'active');},retryClock:{now:()=>1000,setTimer:(fn,delay)=>{timer={fn,delay};return 1;},clearTimer:()=>{timer=null;}}}});
+  f.service.approve(f.user,f.task);await f.service.trigger(f.user,f.user.monitors[0]);
+  assert.equal(notifications,1);assert.equal(timer.delay,180000);assert.equal(f.commits,0);
+  f.service.pause(f.user,f.task);assert.equal(timer,null);assert.equal(f.task.restockRetry.state,'cancelled');
+});
+
+test('决战重试先核验后台，匹配订单或未知均不再次执行',async()=>{
+  for(const checked of [{checked:true,matched:true,unknown:false},{checked:false,matched:false,unknown:true}]){
+    let timer;
+    const f=fixture({stock:true,serviceOptions:{recentOrders:async()=>checked,retryClock:{setTimer:fn=>{timer=fn;return 1;},clearTimer:()=>{}}}});
+    f.service.approve(f.user,f.task);await f.service.trigger(f.user,f.user.monitors[0]);
+    f.setStock(false);timer();
+    await new Promise(resolve=>setTimeout(resolve,20));
+    assert.equal(f.commits,0);assert.equal(f.task.restockRetry.state,'needs_input');assert.equal(f.task.enabled,false);
+  }
+});
+
+test('决战重试恢复遇到服务重启时转人工，不恢复定时交易',async()=>{
+  const f=fixture({stock:true});f.service.approve(f.user,f.task);await f.service.trigger(f.user,f.user.monitors[0]);
+  f.service.recover([f.user]);assert.equal(f.task.restockRetry.state,'needs_input');assert.equal(f.task.enabled,false);
+  f.setStock(false);await f.service.trigger(f.user,f.user.monitors[0]);assert.equal(f.commits,0);
 });

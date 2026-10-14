@@ -115,6 +115,8 @@ const orderService = createOrderService({
     const summary=task.result?.purchaseSummary;
     if(summary)detail+='\n目标 '+summary.requestedQuantity+' 件，已确认 '+summary.quantity+' 件，累计 '+summary.currency+' '+summary.total+' / '+summary.maxTotal+(summary.reason?'；'+summary.reason:'');
     if(task.result?.purchases?.length>1)for(const purchase of task.result.purchases)detail+='\n第 '+purchase.sequence+' 笔：'+purchase.status+' · '+(purchase.review?.quantity||0)+' 件'+(purchase.orderId?' · 订单 '+purchase.orderId:'')+(purchase.url?' · '+purchase.url:'');
+    if(task.restockRetry?.state==='active')detail+='\n决战模式每 3 分钟重试，最多 2 小时；每次先核对已有订单，提交或付款开始后不再自动重试。';
+    if(task.restockRetry?.warning)detail+='\n'+task.restockRetry.warning;
     if(task.result?.url)detail+='\n订单 / 付款页面：'+task.result.url;
     if(task.result?.paymentPending?.cashierUrl)detail+='\n付款收银台：'+task.result.paymentPending.cashierUrl;
     addEvent(user, success ? 'success' : 'error', '自动下单 · ' + task.label, detail);
@@ -538,7 +540,7 @@ async function checkMonitor(user, monitor, { manual = false, observed = null } =
     const transitioned = monitor.kind === 'unified' ? evaluateRule(monitor, current, monitor.snapshot).triggered : monitor.kind === 'generated' ? transitionGenerated(monitor.plan, monitor.snapshot, current) : isTransition(monitor, monitor.snapshot, current);
     const conditionSatisfied = currentStateMatches(monitor, current);
     const triggered = transitioned || manual && conditionSatisfied === true && !hadPending;
-    if (transitioned && monitor.enabled) void orderService.trigger(user, monitor);
+    if (transitioned && monitor.enabled) void orderService.trigger(user, monitor, {trigger:'restock'});
     if (triggered) {
       if (!monitor.webhookIds.length) {
         await deliverPending();

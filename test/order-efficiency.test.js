@@ -100,7 +100,7 @@ test('quantity options bind the authorized count from visible labels, not mercha
 import {assertFlowStep} from '../automation/agent/flow-template.js';
 import {agentError} from '../automation/agent/model.js';
 
-test('verified page progress gives the next obstacle its own bounded recovery attempts',async()=>{
+test('verified page progress does not replenish the task transient recovery budget',async()=>{
   const browser=session();let phase=0,attempt=0,recoveries=0;
   const observe=browser.methods.observe;
   browser.methods.observe=async()=>{const page=await observe();page.url+='?step='+phase;return page;};
@@ -110,8 +110,8 @@ test('verified page progress gives the next obstacle its own bounded recovery at
     if(attempt++<2)throw agentError('AGENT_ELEMENT_MISSING','Page element is still mounting');
     return {action:'click',reason:'Continue to the next verified page',target:target('continue','e0')};
   };
-  const result=await runCommerceAgent(program,order,browser,{plan,onLearn:async value=>{if(value.status==='recovery')recoveries++;}});
-  assert.equal(result.status,'prepared');assert.equal(recoveries,4);assert.equal(browser.submits,1);
+  await assert.rejects(runCommerceAgent(program,order,browser,{plan,onLearn:async value=>{if(value.status==='recovery')recoveries++;}}),{code:'AGENT_ELEMENT_MISSING'});
+    assert.equal(recoveries,3);assert.equal(browser.submits,0);
 });
 
 test('a successful no-op on an unchanged page cannot replenish recovery attempts',async()=>{
@@ -122,5 +122,5 @@ test('a successful no-op on an unchanged page cannot replenish recovery attempts
     throw agentError('AGENT_ELEMENT_MISSING','Same unresolved page');
   };
   await assert.rejects(runCommerceAgent(program,order,browser,{plan}),{code:'AGENT_ELEMENT_MISSING'});
-  assert.equal(calls,4);assert.equal(browser.submits,0);
+  assert.equal(calls,5);assert.equal(browser.submits,0);
 });

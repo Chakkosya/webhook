@@ -39,12 +39,12 @@ test('业务 SOP v2 不保存代码或选择器，运行时才绑定元素',()=>
   assert.throws(()=>validateStep({action:'eval',reason:'execute'}),{code:'AGENT_PLAN_INVALID'});
   assert.throws(()=>validateStep({action:'click',reason:'guess',target:{...target('buy'),confidence:0.5}}),{code:'AGENT_LOW_CONFIDENCE'});
 });
-test('定位按 ARIA、文本、Label、Placeholder、Name、ID、CSS、XPath 顺序，歧义时不取第一项',async()=>{
-  assert.deepEqual(locatorCandidates({role:'button',accessibleName:'Buy',text:'Buy',label:'Buy',placeholder:'Buy',name:'buy',id:'x',runtimeSelector:'runtime',runtimeXPath:'xpath'}).map(c=>c.strategy),['aria','text','label','placeholder','name','id','css','xpath']);
+test('定位按 CSS、XPath、ID、ARIA、文本、Label、Placeholder、Name 顺序，歧义时不取第一项',async()=>{
+  assert.deepEqual(locatorCandidates({role:'button',accessibleName:'Buy',text:'Buy',label:'Buy',placeholder:'Buy',name:'buy',id:'x',runtimeSelector:'runtime',runtimeXPath:'xpath'}).map(c=>c.strategy),['css','xpath','id','aria','text','label','placeholder','name']);
   const candidates=[],loc=(kind,count,marker)=>({count:async()=>{candidates.push(kind);return count;},getAttribute:async()=>marker,isVisible:async()=>true});
-  const page={getByRole:()=>loc('aria',2),getByText:()=>loc('text',1,'stale:e0'),getByLabel:()=>loc('label',1,'now:e0'),locator:()=>loc('css',0)};
+  const page={getByRole:()=>loc('aria',2),getByText:()=>loc('text',1,'stale:e0'),getByLabel:()=>loc('label',1,'now:e0'),locator:selector=>loc(selector.startsWith('xpath=')?'xpath':'css',1,'stale:e0')};
   const found=await resolveSemanticTarget(page,{observationId:'now',elements:[{ref:'e0',role:'button',accessibleName:'Buy',text:'Buy',label:'Buy',visible:true}]},target('purchase'));
-  assert.equal(found.strategy,'label');assert.deepEqual(candidates,['css','aria','text','label']);assert.deepEqual(found.attempts.map(attempt=>attempt.outcome),['ambiguous','different_observed_element','matched']);
+  assert.equal(found.strategy,'label');assert.deepEqual(candidates,['css','css','xpath','aria','text','label']);assert.deepEqual(found.attempts.map(attempt=>attempt.outcome),['different_observed_element','different_observed_element','ambiguous','different_observed_element','matched']);
 });
 test('每步重新观察，购物车必须核验商品和数量，不能凭点击宣称成功',async()=>{
   const session=sessionFixture(),steps=[{action:'cart',reason:'Enter cart',target:target('add_to_cart')},{action:'verify_cart',reason:'Check actual cart',bindings:{product:target('product'),quantity:target('quantity','e1')}},review()];
