@@ -223,8 +223,8 @@ try{
   await page.locator('#order-instruction').fill('timeout-once');const requestsBeforeTimeout=aiRequests.length;
   await page.locator('[data-order-editor-action="generate"]').click();
   await page.waitForFunction(()=>document.querySelector('[data-order-editor-action="generate"]')?.disabled===false,null,{timeout:30000});
-  assert.equal((await state()).orderTasks[0].errorCode,'ORDER_AI_TIMEOUT');assert.equal(aiRequests.length-requestsBeforeTimeout,1);assert.equal(stalledAI,1);
-  await generate();assert.equal(droppedProgress,1);assert.equal(aiRequests.length-requestsBeforeTimeout,3);assert.equal(createdOrders,ordersBeforePick);assert.equal(paymentRequests,0);console.log('PASS a stalled AI body stops without replay; manual retry and lost progress polling remain usable');
+  assert.equal((await state()).orderTasks[0].errorCode,undefined);assert.equal(aiRequests.length-requestsBeforeTimeout,3);assert.equal(stalledAI,1);
+  assert.equal(droppedProgress,1);assert.equal(createdOrders,ordersBeforePick);assert.equal(paymentRequests,0);console.log('PASS a stalled AI body retries once and completes preparation without transactions; lost progress polling remains usable');
   await page.locator('[data-order-coupon-failure="continue"]').click();await enable();
   assert.equal((await state()).orderTasks[0].couponFailurePolicy,'continue');assert.equal((await state()).orderTasks[0].trial,null);
   await page.locator('[data-order-editor-action="pause"]').click();await page.locator('[data-order-editor-action="enable"]').waitFor();
