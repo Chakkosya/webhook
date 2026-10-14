@@ -72,7 +72,7 @@ function fixture({uncertain=false,fake=false,pay=false,paymentFailure=false,paym
       }
     }};return session;
   }});
-  return {service,task,user,setLoginError(error){loginError=error;},get generated(){return generated;},get commits(){return commits;},get payments(){return payments;},get writes(){return writes;},get opened(){return opened;},get filled(){return filled;}};
+  return {service,task,user,setLoginError(error){loginError=error;},setStock(value){stock=value;},get generated(){return generated;},get commits(){return commits;},get payments(){return payments;},get writes(){return writes;},get opened(){return opened;},get filled(){return filled;}};
 }
 
 test('下单试跑刷新会话落盘失败时保留原状态，不让后续日志固化失败更新',async()=>{
@@ -82,9 +82,9 @@ test('下单试跑刷新会话落盘失败时保留原状态，不让后续日�
  await f.service.generate(f.user,f.task);assert.equal(f.task.status,'ready');assert.equal(f.user.orderAccounts[0].session,original);assert.equal(original.state.cookies.length,0);assert.equal(f.commits,0);
  fail=false;await f.service.generate(f.user,f.task);assert.deepEqual(f.user.orderAccounts[0].session.state,fresh.state);assert.deepEqual(f.user.orderAccounts[0].session.sessionStorage,fresh.sessionStorage);assert.deepEqual(f.user.orderAccounts[0].session.check,original.check);
 });
-test('代码必须来自 AI 并通过真实核对；审批绑定代码和配置，修改后不得执行',async()=>{
+test('启用授权绑定当前流程和配置，修改后不得执行',async()=>{
   const f=fixture();await f.service.generate(f.user,f.task);assert.equal(f.generated,1);assert.equal(f.task.enabled,false);assert.equal(f.task.trial.passed,true);
-  assert.throws(()=>f.service.approve(f.user,f.task,'wrong'),/重新生成/);
+  assert.throws(()=>f.service.approve(f.user,f.task,'wrong'),/配置已变化/);
   const hash=orderProgramHash(f.task);f.service.approve(f.user,f.task,hash);f.task.quantity=2;
   await assert.rejects(f.service.execute(f.user,f.task),/配置已变更/);assert.equal(f.commits,0);
 });
@@ -113,7 +113,7 @@ test('付款记录先于扣款保存；成功、付款中断和未开始付款�
 test('触发监控变更或删除会撤销原下单授权，不沿用旧条件执行',async()=>{
   const f=fixture();await f.service.generate(f.user,f.task);f.service.approve(f.user,f.task,orderProgramHash(f.task));f.user.monitors[0].keyword='a different trigger';
   await assert.rejects(f.service.execute(f.user,f.task),/监控条件已变化/);assert.equal(f.task.enabled,false);assert.equal(f.commits,0);
-  await assert.rejects(Promise.resolve().then(()=>f.service.approve(f.user,f.task,orderProgramHash(f.task))),/监控条件已变化/);
+  f.service.approve(f.user,f.task);assert.equal(f.task.enabled,true);
   await f.service.generate(f.user,f.task);f.service.approve(f.user,f.task,orderProgramHash(f.task));f.user.monitors=[];await assert.rejects(f.service.execute(f.user,f.task),/已删除/);assert.equal(f.task.enabled,false);assert.equal(f.commits,0);
 });
 
@@ -182,7 +182,7 @@ test('代理认证或网站 HTTP 认证失败停止试跑，不重新生成 AI �
   const f=fixture({pay:true,trialAuthError:Object.assign(new Error('认证未完成'),{code})}),account=f.user.orderAccounts[0],saved=account.session;
   await assert.rejects(f.service.generate(f.user,f.task),error=>error.code===code);
   assert.equal(f.generated,0);assert.equal(f.commits,0);assert.equal(f.payments,0);assert.equal(account.status,'saved');assert.equal(account.session,saved);assert.equal(f.task.status,'needs_validation');assert.equal(f.task.approvedHash,null);assert.equal(f.task.enabled,false);assert.equal(f.task.trial,null);
-  assert.throws(()=>f.service.approve(f.user,f.task,orderProgramHash(f.task)));await assert.rejects(f.service.execute(f.user,f.task));
+  f.service.approve(f.user,f.task);await f.service.execute(f.user,f.task);assert.equal(f.commits,0);
   const execution=fixture({pay:true});await execution.service.generate(execution.user,execution.task);execution.service.approve(execution.user,execution.task,orderProgramHash(execution.task));const original=execution.user.orderAccounts[0].session;execution.setLoginError(Object.assign(new Error('认证未完成'),{code}));await execution.service.execute(execution.user,execution.task);
   assert.equal(execution.generated,1);assert.equal(execution.commits,0);assert.equal(execution.payments,0);assert.equal(execution.user.orderAccounts[0].status,'saved');assert.equal(execution.user.orderAccounts[0].session,original);
  }
@@ -207,13 +207,13 @@ test('优惠码选填且保持大小写，拒绝非文本、超长和多行码�
  const task=validateOrderTask(input),hash=orderProgramHash(task);task.couponCode='SAVE20';assert.notEqual(orderProgramHash(task),hash);task.couponCode='';assert.equal(orderProgramHash(task),hash);
  task.couponCode='SAVE20';const stopHash=orderProgramHash(task);delete task.couponFailurePolicy;assert.equal(orderProgramHash(task),stopHash,'Legacy default-stop approvals keep their hash');task.couponFailurePolicy='continue';assert.notEqual(orderProgramHash(task),stopHash);task.couponFailurePolicy='stop';assert.equal(orderProgramHash(task),stopHash);task.couponCode='';task.couponFailurePolicy='continue';assert.equal(orderProgramHash(task),hash,'A policy for an empty coupon cannot alter the original workflow hash');
 });
-test('无效付款代码不再取得试跑或启用资格，未产生订单',async()=>{
+test('无效购买方案在执行前停止，未产生订单',async()=>{
  const f=fixture({pay:true,generatedProgram:{...program,workflow:{...program.workflow,paymentCode:'function(){return {checks: ;}'}}});
- await assert.rejects(f.service.generate(f.user,f.task),error=>error.code==='ORDER_BUSINESS_PLAN_INVALID');assert.equal(f.task.trial,null);assert.equal(f.commits,0);assert.equal(f.payments,0);assert.throws(()=>f.service.approve(f.user,f.task,orderProgramHash(f.task)));
+ await assert.rejects(f.service.generate(f.user,f.task),error=>error.code==='ORDER_BUSINESS_PLAN_INVALID');assert.equal(f.task.trial,null);assert.equal(f.commits,0);assert.equal(f.payments,0);f.service.approve(f.user,f.task);await f.service.execute(f.user,f.task);assert.equal(f.commits,0);assert.equal(f.task.status,'needs_validation');
 });
-test('当前页面缺货不反复调用 AI，也不允许启用未完成的试跑',async()=>{
+test('当前页面缺货不反复调用 AI，未完成试跑仍可启用监控下单',async()=>{
   const f=fixture({stock:true});await assert.rejects(f.service.generate(f.user,f.task),{code:'ORDER_OUT_OF_STOCK'});
-  assert.equal(f.generated,1);assert.equal(f.task.status,'waiting_stock');assert.equal(f.task.enabled,false);assert.equal(f.commits,0);assert.equal(f.task.validation.preflight,'waiting_stock');assert.throws(()=>f.service.approve(f.user,f.task,orderProgramHash(f.task)));
+  assert.equal(f.generated,1);assert.equal(f.task.status,'waiting_stock');assert.equal(f.task.enabled,false);assert.equal(f.commits,0);assert.equal(f.task.validation.preflight,'waiting_stock');f.service.approve(f.user,f.task);assert.equal(f.task.enabled,true);assert.equal(f.task.trial,null);
 });
 
 test('缺货响应保留准备线索，再次准备复用业务 SOP',async()=>{
@@ -222,7 +222,7 @@ test('缺货响应保留准备线索，再次准备复用业务 SOP',async()=>{
   const workflow=structuredClone(f.task.program.workflow);
   await assert.rejects(f.service.generate(f.user,f.task),{code:'ORDER_OUT_OF_STOCK'});
   assert.equal(f.generated,2);assert.deepEqual(f.task.program.workflow,workflow);assert.equal(f.task.validation.syntax,'passed');assert.equal(f.task.status,'waiting_stock');assert.equal(f.task.enabled,false);assert.equal(f.commits,0);assert.equal(f.task.trial,null);
-  assert.throws(()=>f.service.approve(f.user,f.task,orderProgramHash(f.task)));await assert.rejects(f.service.execute(f.user,f.task));
+  f.service.approve(f.user,f.task);await f.service.execute(f.user,f.task);assert.equal(f.commits,0);
 });
 
 test('提交前临时登录失败可在同一配置重新验证，旧授权不能直接重试',async()=>{
@@ -231,4 +231,50 @@ test('提交前临时登录失败可在同一配置重新验证，旧授权不�
  assert.equal(f.task.status,'needs_validation');assert.equal(f.task.result,null);assert.equal(f.task.trial,null);assert.equal(f.task.approvedHash,null);assert.equal(f.task.lastAttempt.code,'ORDER_LOGIN_UNVERIFIED');assert.equal(f.commits,0);
  await assert.rejects(f.service.execute(f.user,f.task));
  f.setLoginError(null);await f.service.generate(f.user,f.task);assert.equal(f.task.status,'ready');assert.equal(f.task.validation.preflight,'passed');f.service.approve(f.user,f.task,orderProgramHash(f.task));await f.service.execute(f.user,f.task);assert.equal(f.commits,1);
+});
+
+
+test('未试跑的配置可直接启用，重启后监控触发在同一浏览器完成一次下单或付款',async()=>{
+  for(const pay of [false,true]){
+    const f=fixture({pay});f.service.approve(f.user,f.task);
+    assert.equal(f.task.status,'armed');assert.equal(f.task.trial,null);assert.equal(f.opened,0);assert.equal(f.generated,0);
+    f.service.recover([f.user]);assert.equal(f.task.enabled,true);
+    await f.service.trigger(f.user,f.user.monitors[0]);await f.service.trigger(f.user,f.user.monitors[0]);
+    assert.equal(f.task.status,pay?'paid':'ordered',f.task.error);assert.equal(f.opened,1);assert.equal(f.commits,1);assert.equal(f.payments,pay?1:0);assert.equal(f.task.trial,null);assert.equal(f.task.enabled,false);
+  }
+});
+
+test('触发时仍缺货则继续等待，下一次补货直接尝试下单',async()=>{
+  const f=fixture({stock:true});f.service.approve(f.user,f.task);
+  await f.service.trigger(f.user,f.user.monitors[0]);
+  assert.equal(f.task.status,'waiting_stock');assert.equal(f.task.enabled,true);assert.equal(f.task.result,null);assert.equal(f.commits,0);assert.equal(f.opened,1);
+  f.service.recover([f.user]);assert.equal(f.task.enabled,true);
+  f.setStock(false);await f.service.trigger(f.user,f.user.monitors[0]);
+  assert.equal(f.task.status,'ordered',f.task.error);assert.equal(f.commits,1);assert.equal(f.opened,2);assert.equal(f.task.trial,null);
+});
+
+test('等待补货授权直接执行当前流程，不在触发时另跑一次预检',async()=>{
+  const f=fixture({stock:true});await assert.rejects(f.service.generate(f.user,f.task),{code:'ORDER_OUT_OF_STOCK'});
+  f.service.waitStock(f.user,f.task);f.setStock(false);const opened=f.opened;
+  await f.service.trigger(f.user,f.user.monitors[0]);
+  assert.equal(f.task.status,'ordered',f.task.error);assert.equal(f.opened,opened+1);assert.equal(f.commits,1);assert.equal(f.task.trial,null);assert.equal(f.task.stockAuthorization,null);
+});
+
+test('直接启用仍要求保存登录，暂停及配置变化阻止监控下单',async()=>{
+  const absent=fixture();absent.user.orderAccounts=[];assert.throws(()=>absent.service.approve(absent.user,absent.task),/登录|账户/);
+  for(const change of ['pause','quantity','account','monitor']){
+    const f=fixture();f.service.approve(f.user,f.task);
+    if(change==='pause')f.service.pause(f.user,f.task);
+    if(change==='quantity')f.task.quantity=2;
+    if(change==='account')f.user.orderAccounts[0].revision++;
+    if(change==='monitor')f.user.monitors[0].keyword='changed';
+    await f.service.trigger(f.user,f.user.monitors[0]);assert.equal(f.opened,0);assert.equal(f.commits,0);
+    if(change==='account'||change==='monitor'){f.service.approve(f.user,f.task);await f.service.trigger(f.user,f.user.monitors[0]);assert.equal(f.commits,1);assert.equal(f.task.status,'ordered');}
+  }
+});
+
+test('无试跑下单结果未知时保留记录，后续触发不重复提交',async()=>{
+  const f=fixture({uncertain:true});f.service.approve(f.user,f.task);
+  await f.service.trigger(f.user,f.user.monitors[0]);await f.service.trigger(f.user,f.user.monitors[0]);
+  assert.equal(f.task.status,'uncertain');assert.equal(f.commits,1);assert.equal(f.opened,1);assert.equal(f.task.enabled,false);
 });

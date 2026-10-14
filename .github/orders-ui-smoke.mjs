@@ -170,6 +170,12 @@ try{
     console.log('PASS execution outcome: '+task.label+' → '+task.status);
   };
   await fillForm('Product A 自动下单',20,'submit',sourceBase+'/aff?aff=partner-42');
+  assert.equal(await page.locator('#order-currency').getAttribute('list'),'order-currencies');
+  assert.ok(await page.locator('#order-currencies option').count()>=30);
+  assert.match(await page.locator('#order-currencies option[value="CAD"]').getAttribute('label'),/加拿大元.*Canadian Dollar/);
+  await page.locator('#order-currency').fill('CAD');
+  assert.equal(await page.locator('#order-currency').inputValue(),'CAD');
+  await page.locator('#order-currency').fill('');
   assert.equal(await page.locator('#order-coupon-code').inputValue(),'');
   assert.equal(await page.locator('[data-order-coupon-failure="stop"]').getAttribute('aria-checked'),'true');
   await page.locator('[data-order-coupon-failure="continue"]').click();
@@ -195,12 +201,14 @@ try{
   await page.waitForFunction(()=>document.querySelector('[data-order-editor-action="generate"]')?.disabled===false,null,{timeout:30000});
   assert.equal((await state()).orderTasks[0].errorCode,'ORDER_AI_TIMEOUT');assert.equal(aiRequests.length-requestsBeforeTimeout,1);assert.equal(stalledAI,1);
   await generate();assert.equal(droppedProgress,1);assert.equal(aiRequests.length-requestsBeforeTimeout,3);assert.equal(createdOrders,ordersBeforePick);assert.equal(paymentRequests,0);console.log('PASS a stalled AI body stops without replay; manual retry and lost progress polling remain usable');
-  await page.locator('[data-order-coupon-failure="continue"]').click();await page.locator('[data-order-editor-action="enable"]').click();
-  await page.waitForFunction(()=>document.body.innerText.includes('优惠码失败处理已修改，请先重新生成并试跑'));assert.equal((await state()).orderTasks[0].enabled,false);
+  await page.locator('[data-order-coupon-failure="continue"]').click();await enable();
+  assert.equal((await state()).orderTasks[0].couponFailurePolicy,'continue');assert.equal((await state()).orderTasks[0].trial,null);
+  await page.locator('[data-order-editor-action="pause"]').click();await page.locator('[data-order-editor-action="enable"]').waitFor();
   await page.locator('[data-order-coupon-failure="stop"]').click();
-  await page.locator('#order-coupon-code').fill('Changed-after-trial');await page.locator('[data-order-editor-action="enable"]').click();
-  await page.waitForFunction(()=>document.body.innerText.includes('配置已修改，请先重新生成并试跑'));assert.equal((await state()).orderTasks[0].enabled,false);
-  await page.locator('#order-coupon-code').fill('');console.log('PASS changing coupon after trial cannot enable the stale configuration');
+  await page.locator('#order-coupon-code').fill('Changed-after-trial');await enable();
+  assert.equal((await state()).orderTasks[0].couponCode,'Changed-after-trial');assert.equal((await state()).orderTasks[0].trial,null);
+  await page.locator('[data-order-editor-action="pause"]').click();await page.locator('[data-order-editor-action="enable"]').waitFor();
+  await page.locator('#order-coupon-code').fill('');await generate();console.log('PASS enable saves edited coupon settings without requiring another trial');
   assert.equal(createdOrders,0);assert.equal(paymentRequests,0);assert.equal(loginRequests,1,'Generation reuses saved session');current=await state();let task=current.orderTasks[0];assert.equal(task.monitorId,monitor.id);assert.equal(task.product,'');assert.equal(task.currency,'');assert.equal(task.verifiedProduct,'Product A');assert.equal(task.verifiedCurrency,'USD');assert.ok(task.productSelection);assert.equal(task.trial.affiliate.status,'verified');assert.equal(task.trial.affiliate.name,'partner_credit');
   const orderLogPath='/api/monitors/'+monitor.id+'/order-execution-logs';
   const readLogs=async()=>{const response=await context.request.get(base+orderLogPath);assert.ok(response.ok());return (await response.json()).report;};
@@ -267,7 +275,7 @@ try{
   await newConfig();await fillForm('中英文付款方式预选',20,'pay');await page.locator('[data-order-payment-name="支付宝"]').click();
   const beforeGatewayGeneration=aiRequests.length;await generate();current=await state();task=current.orderTasks[0];assert.equal(task.verifiedPaymentMethod.label,'Alipay');assert.equal(task.verifiedPaymentMethod.value,'route_017');assert.equal(createdOrders,8);assert.equal(paymentRequests,paymentsBeforePending+1);
   assert.equal(await page.locator('#order-addon select').count(),0,'App payment choices never add a dropdown');assert.ok(await page.locator('[data-order-payment-name="Alipay"]').isVisible());
-  await page.locator('#order-payment-name').fill('PayPal');await page.locator('[data-order-editor-action="enable"]').click();await pause(150);assert.equal((await state()).orderTasks[0].enabled,false);await page.locator('#order-payment-name').fill('支付宝');await enable();await run();current=await state();task=current.orderTasks[0];
+  await enable();await run();current=await state();task=current.orderTasks[0];
   assert.equal(task.status,'paid',task.error||JSON.stringify(task.result));assert.equal(task.result.payment.paymentMethod.label,'支付宝');assert.equal(createdOrders,9);assert.equal(paymentRequests,paymentsBeforePending+2);assert.equal(aiRequests.length,beforeGatewayGeneration+4,'Two preparation calls and two original-invoice planning calls');
   await page.screenshot({path:path.join(output,'mobile-payment-choice.png'),fullPage:true});
   await newConfig();await fillForm('不支持的方式启用前发现',20,'pay');await page.locator('[data-order-payment-name="PayPal"]').click();await page.locator('[data-order-editor-action="generate"]').click();
@@ -290,6 +298,18 @@ try{
   console.log('PASS blank product/currency, private manual product selection, hidden logout login proof, currency change guard, insufficient/unknown balance and reachable pending invoice without payment or repeat orders');
 
   }
+
+  available=false;await post('/api/monitors/'+monitor.id+'/check');
+  await page.reload();await openMonitor();await newConfig();await fillForm('补货直接下单');
+  const directOrders=createdOrders,directReads=productReads;await enable();current=await state();task=current.orderTasks[0];
+  assert.equal(task.enabled,true);assert.equal(task.trial,null);assert.equal(task.program,null);assert.equal(productReads,directReads);
+  assert.equal((await context.request.post(base+'/api/order-tasks/'+task.id+'/enable',{data:{expectedRevision:task.revision-1}})).status(),409);
+  available=true;await post('/api/monitors/'+monitor.id+'/check');
+  for(let i=0;i<400;i++){current=await state();if(current.orderTasks.find(item=>item.id===task.id).result)break;await pause(50);}
+  task=current.orderTasks.find(item=>item.id===task.id);assert.equal(task.status,'ordered',task.error);assert.equal(task.trial,null);assert.equal(createdOrders,directOrders+1);
+  const directLog=(await readLogs()).operations[0];assert.equal(directLog.kind,'execute');assert.equal(directLog.events.filter(event=>event.action==='打开执行浏览器').length,1);
+  await post('/api/monitors/'+monitor.id+'/check');assert.equal(createdOrders,directOrders+1);
+  console.log('PASS direct enable with no trial, one browser session and one order on restock');
   assert.deepEqual(errors,[]);console.log('PASS integrated monitor ordering, private interactive prelogin with 2FA and restart, real AFF Cookie on order request, AI-generated DOM repair before submission, actual scoped payment, budget/invoice/AFF/login protections, cancellation, tenant isolation, mobile layout');
 }catch(error){if(page)console.error('Order smoke UI state:',await page.locator('#order-status,#order-account-status,#toast').allTextContents());throw error;}finally{
   await browser?.close();if(child){child.kill();await new Promise(r=>child.exitCode!==null?r():child.once('exit',r));}

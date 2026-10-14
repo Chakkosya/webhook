@@ -180,7 +180,7 @@ async function rememberedStep(recipes,input,completed,onSatisfied){
   return distinct.length===1?distinct[0]:null;
 }
 export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEvent=()=>{},allowAssistance=true,onSatisfied=async()=>{}}={}){
-  let lastInput,lastStep,lastRecipe,identifiedProduct,pending=[];
+  let lastInput,lastStep,lastRecipe,identifiedProduct,lastFailure,pending=[];
   const expandedPages=new Set(),failedPages=new Map(),metadata=new WeakMap(),completed=new Set(),completedClicks=[];
   const rememberRecipe=recipe=>{if(recipe.currentOnly)return;const key=recipeKey(recipe);completed.add(key);if(!recipes.some(item=>recipeKey(item)===key)){recipes.push(recipe);onRemember(recipes);}};
   const invalidate=recipe=>{
@@ -226,7 +226,7 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
       if(!allowAssistance)throw bindingFailure();
       source='ai_assistance';group=randomUUID();
       const key=scopeKey(input);
-      if((failedPages.get(key)||0)>=2)throw bindingFailure();
+      if((failedPages.get(key)||0)>=2)throw bindingFailure(lastFailure);
       let result;
       try{
         const current=recipes.filter(item=>item.version===2&&scopeIdentity(item.scope)===key);
@@ -268,6 +268,7 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
         }
         step=steps[nextIndex];recipe=compiledSteps[nextIndex];pending=compiledSteps.slice(nextIndex+1);
       }catch(error){
+        lastFailure=error;
         if(['AGENT_LOW_CONFIDENCE','AGENT_PLAN_INVALID','AGENT_STEP_UNVERIFIED'].includes(error.code))failedPages.set(key,(failedPages.get(key)||0)+1);
         error.rejectedPlan??=result;
         if(error.code==='AGENT_ELEMENT_MISSING')expandedPages.add(key);

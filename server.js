@@ -110,6 +110,9 @@ const orderService = createOrderService({
   notify: async (user, task) => {
     const success = ['prepared','ordered','paid','awaiting_payment'].includes(task.status);
     let detail = task.status === 'awaiting_payment' ? task.result?.paymentPending?.message || '订单已提交，等待付款。' : task.status === 'paid' ? '订单已提交并付款，请在网站核对账单。' : task.status === 'payment_failed' ? '订单已提交，付款未完成：' + task.error : task.status === 'ordered' ? '订单已提交，请在网站核对订单和支付情况。' : task.status === 'prepared' ? '已核对商品、数量和总价，停在提交前。' : task.status === 'uncertain' ? '订单或付款结果尚未确认，请核对网站订单记录；不会自动重试。' : task.error;
+    const summary=task.result?.purchaseSummary;
+    if(summary)detail+='\n目标 '+summary.requestedQuantity+' 件，已确认 '+summary.quantity+' 件，累计 '+summary.currency+' '+summary.total+' / '+summary.maxTotal+(summary.reason?'；'+summary.reason:'');
+    if(task.result?.purchases?.length>1)for(const purchase of task.result.purchases)detail+='\n第 '+purchase.sequence+' 笔：'+purchase.status+' · '+(purchase.review?.quantity||0)+' 件'+(purchase.orderId?' · 订单 '+purchase.orderId:'')+(purchase.url?' · '+purchase.url:'');
     if(task.result?.url)detail+='\n订单 / 付款页面：'+task.result.url;
     if(task.result?.paymentPending?.cashierUrl)detail+='\n付款收银台：'+task.result.paymentPending.cashierUrl;
     addEvent(user, success ? 'success' : 'error', '自动下单 · ' + task.label, detail);
@@ -1137,7 +1140,10 @@ async function handler(request, response) {
           await operation; return sendJson(response,200,{task:publicOrderTask(task)});
         }
         if (request.method === 'POST' && action === 'wait-stock') return sendJson(response,200,{task:orderService.waitStock(user,task)});
-        if (request.method === 'POST' && action === 'enable') return sendJson(response,200,{task:orderService.approve(user,task,body.codeHash)});
+        if (request.method === 'POST' && action === 'enable') {
+          if(body.expectedRevision!=null&&body.expectedRevision!==task.revision)return sendJson(response,409,{error:'任务配置已变化，请刷新后重新启用'});
+          return sendJson(response,200,{task:orderService.approve(user,task,body.codeHash)});
+        }
         if (request.method === 'POST' && action === 'run') return sendJson(response,200,{task:await orderService.execute(user,task,{manual:true})});
         return sendJson(response,405,{error:'不支持的请求方法'});
       }

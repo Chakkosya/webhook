@@ -13,12 +13,13 @@ test('模型索要未来页面时进入浏览器探索修复，而不交给用�
   assert.equal(isFuturePageEvidenceRefusal(refusal),true);
   const planner=createPlanner(async()=>({action:'stop',reason:refusal}));
   await assert.rejects(planner(input()),{code:'AGENT_DISCOVERY_REQUIRED'});
+  await assert.rejects(planner(input({...observation,title:'Shopping Cart - VMISS'})),{code:'AGENT_DISCOVERY_REQUIRED'});
   const errorPlanner=createPlanner(async()=>({error:refusal}));
   await assert.rejects(errorPlanner(input()),{code:'AGENT_DISCOVERY_REQUIRED'});
 });
 test('实际结算证据缺失、购物车待核验或已提交订单仍停止，不放宽验证',async()=>{
   const planner=createPlanner(async()=>({action:'stop',reason:refusal}));
-  for(const current of [input({...observation,title:'Checkout'}),input(observation,{pendingVerification:'cart'}),input(observation,{submissionStarted:true}),input({...observation,elements:[]})]){
+  for(const current of [input({...observation,title:'Checkout',elements:[...observation.elements,{ref:'e1',role:'button',text:'Place order',visible:true}]}),input(observation,{pendingVerification:'cart'}),input(observation,{submissionStarted:true}),input({...observation,elements:[]})]){
     await assert.rejects(planner(current),error=>error.code==='AGENT_PLAN_INVALID'&&!error.orderInput);
   }
   assert.equal(isFuturePageEvidenceRefusal('Multiple products match, cannot identify the target'),false);

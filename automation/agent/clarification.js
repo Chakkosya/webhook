@@ -3,7 +3,8 @@ import {agentError} from './model.js';
 const normalize=value=>String(value??'').normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
 
 // A browser binding failure is an implementation problem, not missing user intent.
-export function bindingFailure(){
+export function bindingFailure(cause){
+  if(cause){cause.userMessage=cause.message;return cause;}
   return agentError('AGENT_BINDING_FAILED','暂时未能识别这个页面的购买步骤。商品链接、名称和购买要求已保留，无需重复填写。可以重新准备，或点选页面中的商品后再试。');
 }
 export function stopError(step,observation,order={},workflow={}){

@@ -1,3 +1,4 @@
+import {checkQuantityCapacity} from '../../lib/order-quantity.js';
 import {agentError} from './model.js';
 import {matchesOrderConfiguration,parseOrderQuantity} from '../../lib/order-evidence.js';
 
@@ -41,7 +42,7 @@ export function resolveValueSource(step,input){
   if(!step.valueFrom)return step;
   if(!['fill','select'].includes(step.action))throw agentError('AGENT_PLAN_INVALID','只有输入和选项步骤可绑定任务参数');
   let expected;
-  if(step.valueFrom==='quantity')expected=String(input.order.quantity);
+  if(step.valueFrom==='quantity'){checkQuantityCapacity(input.observation.elements.find(el=>el.ref===step.target?.ref),input.order.quantity);expected=String(input.order.quantity);}
   else if(typeof step.valueFrom==='object'&&typeof step.valueFrom.requirement==='string'){
     const required=(input.workflow.requirements||[]).filter(item=>item.name===step.valueFrom.requirement);
     if(required.length!==1)throw agentError('AGENT_PLAN_INVALID','流程引用了未确认的配置要求');

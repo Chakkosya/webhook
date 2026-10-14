@@ -32,6 +32,20 @@ test('local merchant: one preparation, default values, JSON forms and transactio
     return {action:'review',reason:'Review current order',bindings:{submit:bind('submit',el=>el.tag==='button'),product,quantity,total:bind('total',el=>el.id==='total'),currency:bind('currency',el=>el.id==='currency')},configuration:[{name:'Cycle',target:cycle}]};
   };
   try{
+
+    for(const mode of ['native','json','quantity-select'])await t.test(mode+' submits directly with no saved trial or request contract',async()=>{
+      const before=counts.orders;let started=0;
+      const order={...task,url:base+'/checkout?mode='+mode,product:'',currency:''},browser=await createOrderBrowser(order,{launch,onBeforeSubmit:async()=>{started++;}});
+      try{const result=await runCommerceAgent(workflow,order,browser,{plan});assert.equal(result.status,'ordered');assert.equal(result.review.product,'Product A');assert.equal(result.review.currency,'USD');assert.equal(started,1);assert.equal(counts.orders,before+1);}finally{await browser.close();}
+    });
+    await t.test('a product discovered during configuration reaches checkout and submits in one session',async()=>{
+      const before=counts.orders,beforeCarts=counts.carts,order={...task,url:base+'/configure',product:''},browser=await createOrderBrowser(order,{launch});
+      try{assert.equal((await runCommerceAgent(workflow,order,browser,{plan})).status,'ordered');assert.equal(counts.carts,beforeCarts+1);assert.equal(counts.orders,before+1);}finally{await browser.close();}
+    });
+    for(const mismatch of [{product:'Product B'},{quantity:2},{currency:'CNY'},{maxTotal:5}])await t.test('direct execution rejects '+Object.keys(mismatch)[0]+' mismatch before submission',async()=>{
+      const before=counts.orders;let started=0;const order={...task,...mismatch},browser=await createOrderBrowser(order,{launch,onBeforeSubmit:async()=>{started++;}});
+      try{await assert.rejects(runCommerceAgent(workflow,order,browser,{plan,autoRepair:false}));assert.equal(started,0);assert.equal(counts.orders,before);}finally{await browser.close();}
+    });
     for(const mode of ['native','json','quantity-select'])await t.test(mode+' preflight has zero submit clicks or screenshots; execution sends one order',async()=>{
       let captures=0,started=0;const before=counts.orders,order={...task,url:base+'/checkout?mode='+mode};
       let browser=await createOrderBrowser({...order,dryRun:true},{launch,onEvidence:async()=>{captures++;}}),trial;

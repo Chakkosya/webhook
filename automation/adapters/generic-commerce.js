@@ -1,10 +1,15 @@
 export function pageType(page){
-  const text=(page.title||'')+' '+(page.text||'');
-  if(/payment\s+(successful|complete)|支付成功|已付款/i.test(text))return 'payment_result';
-  if(/order\s*(?:number\b|id\b|#)|order\s+confirmation\b|订单号|訂單編號/i.test(text))return 'order_result';
-  if(/invoice|账单|發票/i.test(text))return 'invoice';
-  if(/checkout|place order|submit order|结账|提交订单/i.test(text))return 'checkout';
-  if(/shopping cart|购物车|購物車/i.test(text))return 'cart';
+  const elements=(page.elements||[]).filter(el=>el.visible!==false&&!el.disabled);
+  const actions=elements.filter(el=>['link','button'].includes(el.role));
+  const text=elements.filter(el=>!['link','button'].includes(el.role)).map(el=>el.text||'').join(' ') || page.text || '';
+  if(confirmationEvidence(page,'payment'))return 'payment_result';
+  if(confirmationEvidence(page,'order'))return 'order_result';
+  const hasAction=pattern=>actions.some(el=>pattern.test(el.accessibleName||el.text||''));
+  if(hasAction(/pay\s+(?:now|invoice)|支付账单|付款/i)&&/invoice|账单|發票/i.test(text))return 'invoice';
+  if(hasAction(/place order|submit order|提交订单|确认下单/i))return 'checkout';
+  const entries=actions.filter(el=>/order now|buy now|购买|立即订购/i.test(el.accessibleName||el.text||''));
+  if(new Set(entries.map(el=>el.regionRef||el.ref)).size>1)return 'catalog';
+  if(hasAction(/checkout|结账|去结算/i)&&/quantity|qty|数量|total|总计|合计/i.test(text))return 'cart';
   if(/catalog|category|商品列表|产品列表|分類|分类/i.test(page.title||''))return 'catalog';
   return 'product_or_other';
 }

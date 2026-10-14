@@ -102,9 +102,9 @@ test('one preflight and the approved execution reuse the compiled flow without m
 });
 test('repeated internal binding failures preserve the product without asking the user to diagnose the page',async()=>{
   const f=serviceFixture({ambiguous:true});
-  await assert.rejects(f.service.generate(f.user,f.task),{code:'AGENT_BINDING_FAILED'});
+  await assert.rejects(f.service.generate(f.user,f.task),{code:'AGENT_LOW_CONFIDENCE'});
   assert.equal(f.business,1);assert.equal(f.assistance,2);assert.equal(f.opened,1);assert.equal(f.submitted,0);
-  assert.equal(f.task.failure.category,'recoverable');assert.equal(f.task.failure.orderRequestSent,'no');assert.equal(f.task.input,null);assert.equal(f.task.failure.input,undefined);assert.equal(f.task.product,'Product A');assert.match(f.task.error,/无需重复填写/);
+  assert.equal(f.task.failure.category,'recoverable');assert.equal(f.task.failure.orderRequestSent,'no');assert.equal(f.task.input,null);assert.equal(f.task.failure.input,undefined);assert.equal(f.task.product,'Product A');assert.match(f.task.error,/动作依据不足/);
   assert.equal(f.task.trial,null);assert.equal(f.task.enabled,false);
 });
 test('a failed mapped action asks AI to repair only the current obstacle',async()=>{
@@ -112,7 +112,7 @@ test('a failed mapped action asks AI to repair only the current obstacle',async(
   await runCommerceAgent(program(),order,fixture(),{plan:createAssistedPlanner(async input=>batch(input.observation),{recipes})});
   const session=fixture({rejectFill:true});let assistance=0;
   const plan=createAssistedPlanner(async()=>{assistance++;return {action:'stop',reason:'网站拒绝数量修改，请确认是否需要先选择套餐'};},{recipes});
-  await assert.rejects(runCommerceAgent(program(),order,session,{plan}),error=>error.code==='AGENT_PLAN_INVALID'&&!error.orderInput&&/无需重复填写/.test(error.userMessage));
+  await assert.rejects(runCommerceAgent(program(),order,session,{plan}),error=>error.code==='AGENT_PLAN_INVALID'&&!error.orderInput&&/网站拒绝数量修改/.test(error.userMessage));
   assert.equal(assistance,2);assert.deepEqual(session.calls,['fill']);assert.equal(session.receipt,null);
 });
 test('semantic compression preserves late controls and hidden invoice metadata',()=>{
@@ -285,7 +285,7 @@ test('a malformed page action receives its rejected output and the already ident
     assert.equal(input.order.product,'Product A');assert.equal(input.order.url,order.url);
     assert.equal(input.page.targetProduct.status,'identified');assert.equal(input.page.targetProduct.name,'Product A');
     assert.ok(input.page.targetProduct.refs.every(ref=>input.page.elements.some(el=>el.ref===ref)));
-    if(attempt===1){rejected=batch(input.page);rejected.steps[0].target.meaning='商品数量';return rejected;}
+    if(attempt===1){rejected=batch(input.page);rejected.steps[0].target.ref='not-a-current-ref';return rejected;}
     assert.deepEqual(input.feedback.previousPlan,rejected);assert.equal(input.feedback.error.code,'AGENT_PLAN_INVALID');
     return batch(input.page);
   }});
@@ -317,7 +317,7 @@ test('a real page choice resumes with its answer and cannot become the same ques
   f.task.program.runtimePlan=[];f.task.flowMemory=null;
   await f.service.generate(f.user,f.task);assert.equal(f.task.status,'ready');assert.equal(f.task.userClarification.answer,'东京');assert.equal(f.business,1);
   repeat=true;f.task.program.runtimePlan=[];f.task.flowMemory=null;
-  await assert.rejects(f.service.generate(f.user,f.task),{code:'AGENT_BINDING_FAILED'});
+  await assert.rejects(f.service.generate(f.user,f.task),{code:'AGENT_PLAN_INVALID'});
   assert.equal(f.task.input,null);assert.equal(f.task.failure.input,undefined);assert.equal(f.task.product,'Product A');
 });
 

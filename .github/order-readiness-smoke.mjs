@@ -76,7 +76,7 @@ try{
   const user={id:'readiness-user',settings:{},monitors:[{id:'m',kind:'webpage',url:base+'/product'}],orderAccounts:[{monitorId:'m',loginUrl:base+'/account',revision:1,status:'saved',session:{state,check:{url:base+'/account'}}}],orderTasks:[]};
   const task=validateOrderTask({monitorId:'m',instruction:'核对购买要求',url:base+'/product',product:'Product A',currency:'USD',quantity:1,maxTotal:10,executionMode:'pay'});user.orderTasks.push(task);
   const service=createOrderService({persist:()=>{},requestAI:async()=>({summary:'Invalid syntax fixture',checkout,workflow:{version:1,prepareCode:'function(){return {ready:true};}',paymentCode:'function(){ return {checks: ; }'}})});
-  await assert.rejects(service.generate(user,task),e=>e.code==='ORDER_BUSINESS_PLAN_INVALID');assert.equal(task.trial,null);assert.equal(task.enabled,false);assert.equal(orders,0);assert.throws(()=>service.approve(user,task,orderProgramHash(task)));
+  await assert.rejects(service.generate(user,task),e=>e.code==='ORDER_BUSINESS_PLAN_INVALID');assert.equal(task.trial,null);assert.equal(task.enabled,false);assert.equal(orders,0);service.approve(user,task);await service.execute(user,task);assert.equal(orders,0);assert.equal(task.status,'needs_validation');
  });
  console.log('Order readiness regressions passed without real merchant requests.');
 }finally{if(browser)await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}

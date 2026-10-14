@@ -159,7 +159,7 @@ try{
   f.cart.guard=phase=>assert.ok(phase==='submit'?f.task.submissionStartedAt:f.task.paymentStartedAt);
   const service=createOrderService({persist:()=>{},requestAI:async(_user,messages)=>{ai++;assert.equal(JSON.parse(messages[1].content).order.couponFailurePolicy,'continue');return semanticPlan(messages);},openBrowser:(task,options)=>createOrderBrowser(task,{...options,couponVerificationTimeoutMs:1000})});
   await service.generate(user,f.task);assert.equal(ai,3);assert.equal(f.task.trial.preflightPasses,1);assert.equal(f.task.trial.review.total,20);assert.equal(f.task.trial.review.couponFailure.status,'rejected');assert.equal(f.cart.orders,0);assert.equal(f.cart.payments,0);
-  const hash=orderProgramHash(f.task);f.task.couponFailurePolicy='stop';assert.throws(()=>service.approve(user,f.task,hash),/重新生成并试跑/);f.task.couponFailurePolicy='continue';service.approve(user,f.task,hash);
+  const hash=orderProgramHash(f.task);f.task.couponFailurePolicy='stop';assert.throws(()=>service.approve(user,f.task,hash),/配置已变化/);f.task.couponFailurePolicy='continue';service.approve(user,f.task,hash);
   await service.trigger(user,user.monitors[0]);const afterTrigger=ai;await service.trigger(user,user.monitors[0]);assert.equal(ai,afterTrigger);assert.equal(f.task.status,'paid',f.task.error);assert.equal(f.task.result.payment.total,20);assert.equal(f.cart.orders,1);assert.equal(f.cart.payments,1);
   const logs=user.orderExecutionLogs.filter(log=>log.taskId===f.task.id);assert.ok(logs.every(log=>log.context.couponFailurePolicy==='continue'));assert.ok(JSON.stringify(logs).includes('couponFailure'));assert.ok(JSON.stringify(logs).includes('优惠码失败继续'));
  });

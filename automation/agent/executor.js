@@ -1,3 +1,4 @@
+import {quantityLimit,checkStockCapacity} from '../../lib/order-quantity.js';
 import {diagnosticError,diagnosticPage,diagnosticAIOutput,diagnosticReceipt} from '../../lib/order-execution-log.js';
 import {parseOrderQuantity,matchesProductSelection,matchesOrderConfiguration} from '../../lib/order-evidence.js';
 import {orderFailure} from '../../lib/order-diagnostics.js';
@@ -5,7 +6,7 @@ import {DEFAULT_ORDER_TIMEOUTS,createOrderDeadline,abortable} from '../../lib/or
 import {validateStep} from './planner.js';
 import {agentError,validateTarget} from './model.js';
 import {canRecover,recoveryContext,isPlanningUncertainty} from './recovery.js';
-import {bindingFailure,stopError} from './clarification.js';
+import {stopError} from './clarification.js';
 import {assertCartQuantityCorrection} from './flow-template.js';
 import {pageType} from '../adapters/generic-commerce.js';
 const checkoutKeys={submit:'submitSelector',product:'productSelector',quantity:'quantitySelector',total:'totalSelector',currency:'currencySelector'};
@@ -30,6 +31,8 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
     if(!step.bindings?.product||!step.bindings?.quantity)throw agentError('AGENT_STEP_UNVERIFIED','购物车缺少商品和数量证据');
     const product=await read(step.bindings.product),quantity=await read(step.bindings.quantity);
     const identity=order.product||order.productSelection?.text;
+    const count=parseOrderQuantity(quantity.value??quantity.text);
+    if(normalize(product.text)&&(!identity||matchesProductSelection(identity,product.text))&&count>=1&&count<order.quantity&&(!['input','select','textarea'].includes(quantity.tag)||quantity.readOnly||quantity.disabled||quantity.type==='hidden'))throw quantityLimit(count,'网站当前购物车支持 '+count+' 件，将按该数量重新核价');
     const matched=!!normalize(product.text)&&(!identity||matchesProductSelection(identity,product.text))&&parseOrderQuantity(quantity.value??quantity.text)===order.quantity;
     emit('购物车核验',{expected:{product:order.product,quantity:order.quantity},observed:{product:product.text,quantity:quantity.value??quantity.text},matched});
     if(!matched)throw agentError('AGENT_STEP_UNVERIFIED','购物车商品或数量与任务不符');
@@ -83,6 +86,7 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
           const milliseconds=Number(step.value);if(!Number.isInteger(milliseconds)||milliseconds<100||milliseconds>2000)throw agentError('AGENT_PLAN_INVALID','等待必须在 100 到 2000 毫秒之间');
           result=await methods.pause(milliseconds);
         }else if(['fill','select','check','uncheck','click','configure','cart','choosePayment','invoice'].includes(step.action)){
+          if(['click','cart','configure'].includes(step.action))checkStockCapacity(observation.elements.find(el=>el.ref===step.target?.ref)?.contextText,order.quantity);
           const target=await resolve(step.target);
           if(step.action==='choosePayment')result=await methods.choosePayment({selector:target,value:step.value});
           else if(['cart','configure'].includes(step.action)){
@@ -174,9 +178,9 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
         error.rejectedPlan??=plannedStep;
         if(!rejectionHandled)plan.reject?.({error,input:planInput,observation,step:plannedStep});
         const recoveryAllowed=!couponOperationStarted&&autoRepair&&canRecover(error,session,{signal,attempts:repairs});
-        emit('动态步骤失败',{step:index+1,observationId:observation.observationId,url:observation.url,durationMs:Date.now()-stepStarted,error:diagnosticError(error),pendingVerification,recovery:{enabled:autoRepair,allowed:recoveryAllowed,attempts:repairs,maxAttempts:2},transaction:{submissionStarted:!!session.submissionStarted,paymentStarted:!!session.paymentStarted,receiptStatus:session.receipt?.status}});
+        emit('动态步骤失败',{step:index+1,observationId:observation.observationId,url:observation.url,durationMs:Date.now()-stepStarted,error:diagnosticError(error),rejectedPlan:diagnosticAIOutput(error.rejectedPlan),evidence:diagnosticPage({...observation,controls:(observation.elements||[]).filter(el=>JSON.stringify(error.rejectedPlan||{}).includes('"'+el.ref+'"'))},{semantics:true}),pendingVerification,recovery:{enabled:autoRepair,allowed:recoveryAllowed,attempts:repairs,maxAttempts:2},transaction:{submissionStarted:!!session.submissionStarted,paymentStarted:!!session.paymentStarted,receiptStatus:session.receipt?.status}});
         if(!recoveryAllowed){
-          if(!signal?.aborted&&!session.submissionStarted&&!session.paymentStarted&&isPlanningUncertainty(error)&&!error.orderInput)error.userMessage=bindingFailure().message;
+          if(!signal?.aborted&&!session.submissionStarted&&!session.paymentStarted&&isPlanningUncertainty(error)&&!error.orderInput)error.userMessage=error.message;
           throw error;
         }
         repairs++;const recovered=await recoveryContext(error,session,history,{signal,run:fn=>abortable(fn,signal),includeImage:repairs>1&&error.code==='AGENT_LOW_CONFIDENCE'});stagnant=0;queuedObservation=recovered.observation;

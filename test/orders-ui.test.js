@@ -64,3 +64,46 @@ test('choosing a concrete option saves that answer and starts preparation with o
   vm.runInContext(source,context);await handler({target:{closest:()=>button}});
   assert.equal(answer.value,'东京');assert.equal(continued,1);
 });
+
+
+test('new, untested and out-of-stock tasks all offer direct enable with optional trial',()=>{
+  for(const status of [null,'draft','waiting_stock','needs_validation','ready']){
+    const root={innerHTML:'',querySelectorAll:()=>[]},task=status?{id:'task',monitorId:'monitor',status,product:'Product A',executionMode:'submit'}:null;
+    const context=vm.createContext({window:{addEventListener(){}},document:{addEventListener(){}},appState:{monitors:[{id:'monitor',url:'https://shop.example/product'}],orderTasks:task?[task]:[]},$:selector=>selector==='#order-addon'?root:null,escapeHtml:value=>String(value??'')});
+    vm.runInContext(source,context);context.task=task;
+    vm.runInContext("orderMonitorId='monitor';openOrderEditor(task);",context);
+    assert.match(root.innerHTML,/data-order-editor-action="enable"/);assert.match(root.innerHTML,/可选试跑/);assert.doesNotMatch(root.innerHTML,/补货后请重新生成并验证/);
+  }
+});
+
+test('enable saves new or changed fields and arms without generating or requiring a trial',async()=>{
+  const payload={label:'Product A',url:'https://shop.example/product',product:'Product A',quantity:1,maxTotal:20,currency:'USD',executionMode:'submit',monitorId:'monitor',instruction:'',couponCode:'',couponFailurePolicy:'stop',affiliateUrl:'',autoRepair:true,paymentMethod:{kind:'balance',name:'账户余额'},productSelection:null};
+  for(const mode of ['new','saved','edited']){
+    const task=mode==='new'?null:{...payload,id:'task',revision:1,status:'waiting_stock',trial:null,instruction:'按配置选择该商品，保留默认配置，在提交前核对订单。'};
+    const input={...payload,...(task?{expectedRevision:task.revision}:{}),...(mode==='edited'?{maxTotal:30}:{})};
+    const calls=[],toasts=[];let handler,rendered;
+    const form={isConnected:true,querySelector:()=>null,querySelectorAll:()=>[]},status={textContent:''},cancel={classList:{add(){},remove(){}}};
+    const button={id:'',disabled:false,hasAttribute:()=>false,dataset:{orderEditorAction:'enable'}};
+    const context=vm.createContext({window:{addEventListener(){}},document:{addEventListener(type,listener){if(type==='click')handler=listener;}},workspaceEpoch:0,appState:{orderTasks:task?[task]:[]},$:selector=>({'#order-form':form,'#order-status':status,'#order-cancel':cancel}[selector]),toast:(text,error)=>toasts.push({text,error}),api:async(path,method,body)=>{
+      calls.push({path,method,body});return {task:{...(task||{}),...input,id:'task',revision:mode==='saved'?1:2,trial:null,status:path.endsWith('/enable')?'armed':'draft'}};
+    }});
+    vm.runInContext(source,context);context.collectOrderForm=()=>input;context.openOrderEditor=value=>{rendered=value;};
+    vm.runInContext("orderEditorId="+JSON.stringify(task?.id||null)+";orderMonitorId='monitor';",context);
+    await handler({target:{closest:()=>button}});
+    assert.equal(toasts.some(item=>item.error),false,JSON.stringify(toasts));assert.equal(rendered.status,'armed');
+    assert.equal(calls.length,mode==='saved'?1:2);assert.equal(calls.at(-1).path,'/api/order-tasks/task/enable');assert.equal(calls.at(-1).body.codeHash,undefined);
+    assert.equal(calls.at(-1).body.expectedRevision,mode==='saved'?1:2);
+    if(mode!=='saved'){assert.equal(calls[0].method,mode==='new'?'POST':'PUT');assert.equal(calls[0].body.maxTotal,mode==='edited'?30:20);}
+    assert.ok(calls.every(call=>!call.path.endsWith('/generate')));
+  }
+});
+
+test('currency chooser exposes searchable codes and bilingual names, defaults to submission',()=>{
+  const root={innerHTML:'',querySelectorAll:()=>[]};
+  const context=vm.createContext({window:{addEventListener(){}},document:{addEventListener(){}},appState:{monitors:[{id:'monitor',url:'https://shop.example/product'}]},$:selector=>selector==='#order-addon'?root:null,escapeHtml:value=>String(value??'')});
+  vm.runInContext(source,context);vm.runInContext("orderMonitorId='monitor';openOrderEditor();",context);
+  assert.match(root.innerHTML,/list="order-currencies"/);assert.match(root.innerHTML,/value="CAD" label="加拿大元 · Canadian Dollar"/);assert.match(root.innerHTML,/data-order-mode="submit" aria-checked="true"/);
+  for(const code of ['USD','CNY','HKD','EUR','JPY','GBP','AUD','SGD'])assert.match(root.innerHTML,new RegExp('<option value="'+code+'"'));
+  assert.match(context.orderCurrencyField('CAD'),/value="CAD"/);
+  assert.equal(context.orderTaskError({errorCode:'AGENT_PLAN_INVALID',error:'动作缺少有效 ref'}),'动作缺少有效 ref');
+});

@@ -6,7 +6,7 @@ export function inspectCommerceField(el){
     :['radio','checkbox'].includes(el.type)?el.checked?label:'':['INPUT','TEXTAREA'].includes(el.tagName)?rawValue:undefined;
   return {tag:el.tagName.toLowerCase(),type:el.type,checked:el.checked,value,rawValue,text,
     selectedValue:el.tagName==='SELECT'?rawValue:undefined,name:el.name,form:!!el.form,disabled:el.disabled,
-    privateField:el.type==='password'||/token|secret|csrf|session|card|cvv|cvc/i.test(el.name+' '+el.id)};
+    readOnly:!!el.readOnly,privateField:el.type==='password'||/token|secret|csrf|session|card|cvv|cvc/i.test(el.name+' '+el.id)};
 }
 
 // Runs in the merchant page; strip executable content and private field values.
@@ -74,7 +74,7 @@ export function inspectCommercePage(input){
     const text=el.tagName==='INPUT'?(el.type==='submit'||el.type==='button'?el.value:''):readable(el).slice(0,300);
     const accessibleName=(el.getAttribute('aria-label')||labelled||label||text||el.getAttribute('alt')||el.getAttribute('title')||'').slice(0,300);
     return {ref,tag:el.tagName.toLowerCase(),role:role(el),accessibleName,text,regionRef:regions.get(regionFor(el)),contextText:contextText(el),label:label.slice(0,300),placeholder:el.getAttribute('placeholder'),name:el.getAttribute('name'),id:el.id||null,
-      type:el.getAttribute('type'),visible:visible(el),disabled:!!el.disabled,readOnly:!!el.readOnly,required:!!el.required,checked:['checkbox','radio'].includes(el.type)?el.checked:undefined,
+      type:el.getAttribute('type'),visible:visible(el),disabled:!!el.disabled,readOnly:!!el.readOnly,min:el.getAttribute('min'),max:el.getAttribute('max'),step:el.getAttribute('step'),required:!!el.required,checked:['checkbox','radio'].includes(el.type)?el.checked:undefined,
       value:privateField?undefined:el.tagName==='SELECT'?[...el.selectedOptions].map(o=>o.textContent.trim()).join(' '):['INPUT','TEXTAREA'].includes(el.tagName)?el.value:undefined,
       href:el.tagName==='A'?el.getAttribute('href'):undefined,formRef:refs.get(el.form),parentRef:refs.get(el.parentElement),
       options:el.tagName==='SELECT'?[...el.options].map(o=>({value:o.value,text:o.textContent.trim(),selected:o.selected,disabled:o.disabled})):undefined};
