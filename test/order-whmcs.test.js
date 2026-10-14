@@ -28,3 +28,11 @@ test('WHMCS quotes cannot authorize checkout, another cart item or changed form 
   assert.equal(whmcsPreparationRequest(request(quote,'https://other.example/cart.php'),configuration),null);
   assert.equal(whmcsPreparationRequest({...request(quote),isNavigationRequest:()=>true},configuration),null);
 });
+
+
+test('WHMCS group-prefixed product titles retain exact model and variant boundaries',async()=>{
+  const {whmcsProductMatches}=await import('../lib/order-whmcs.js');
+  assert.equal(whmcsProductMatches('NY RYZEN KVM 4GB',{productTitles:['New York - AMD RYZEN KVM - NY RYZEN KVM 4GB']}),true);
+  for(const title of ['New York - NY RYZEN KVM 24GB','New York - NY RYZEN KVM 4GB V2','NY RYZEN KVM 4GB - Annual'])assert.equal(whmcsProductMatches('NY RYZEN KVM 4GB',{productTitles:[title]}),false);
+  assert.equal(whmcsProductMatches('NY RYZEN KVM 4GB',null),false);
+});

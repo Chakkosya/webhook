@@ -9,13 +9,13 @@ const executable=process.env.MONITOR_BROWSER_EXECUTABLE||(process.platform==='wi
 
 test('WHMCS configuration quotes, AJAX continuation, coupons and checkout',{skip:!executable},async t=>{
   let scenario,base;const requests=[],orders=[];
-  const checkout=discounted=>'<a href="/logout">Log out</a><h1 id="product">DS.CN.HK.BGP</h1><p id="quantity">1</p><p id="total">CAD '+(discounted?135:150)+'</p><p id="currency">CAD</p><form method="post" action="/cart.php?a=complete"><input name="quantity" type="hidden" value="1"><input name="discounted" type="hidden" value="'+Number(discounted)+'"><button id="submit">Complete order</button></form><form method="post" action="/cart.php?a=view"><input id="coupon" name="promocode"><button id="apply">Apply coupon</button></form><p id="applied">'+(discounted?'10%OFF':'None')+'</p><p id="discount">CAD '+(discounted?15:0)+'</p>';
+  const checkout=discounted=>'<a href="/logout">Log out</a><h1 id="product">Dedicated Server - DS.CN.HK.BGP</h1><p id="quantity">1</p><p id="total">CAD '+(discounted?135:150)+'</p><p id="currency">CAD</p><form method="post" action="/cart.php?a=complete"><input name="quantity" type="hidden" value="1"><input name="discounted" type="hidden" value="'+Number(discounted)+'"><button id="submit">Complete order</button></form><form method="post" action="/cart.php?a=view"><input id="coupon" name="promocode"><button id="apply">Apply coupon</button></form><p id="applied">'+(discounted?'10%OFF':'None')+'</p><p id="discount">CAD '+(discounted?15:0)+'</p>';
   const server=http.createServer(async(req,res)=>{
     let raw='';for await(const chunk of req)raw+=chunk;const body=new URLSearchParams(raw),url=new URL(req.url,'http://localhost');
     requests.push({method:req.method,path:url.pathname,action:body.get('a')||url.searchParams.get('a'),quote:body.get('calctotal'),recommendations:body.get('addproductajax')});res.setHeader('content-type','text/html; charset=utf-8');
     if(url.pathname==='/store')return res.end('<title>Shopping Cart - VMISS</title><a href="/logout">Log out</a><article><h2>DS.CN.HK.BGP</h2><p>CAD 150 Monthly · 1 Available</p><a href="/store/dedicated-server/cn-hk-bgp">Order Now</a></article>');
     if(url.pathname==='/store/dedicated-server/cn-hk-bgp'){res.writeHead(302,{location:'/cart.php?a=confproduct&i=0'});return res.end();}
-    if(req.method==='GET'&&url.searchParams.get('a')==='confproduct')return res.end(`<a href="/logout">Log out</a><main><form id="frmConfigureProduct"><h1>DS.CN.HK.BGP</h1><input name="configure" type="hidden" value="true"><input name="i" type="hidden" value="0"><input name="token" type="hidden" value="private-csrf"><label>Billing cycle<select name="billingcycle"><option value="monthly">Monthly</option><option value="annually">Annually</option></select></label><label>Memory<select name="configoption[40]"><option value="64">64G</option></select></label><label>Root password<input name="rootpw" type="password" value=""></label><div id="producttotal">Calculating</div><button id="continue">Continue</button></form></main><script>
+    if(req.method==='GET'&&url.searchParams.get('a')==='confproduct')return res.end(`<a href="/logout">Log out</a><main><form id="frmConfigureProduct"><h1>Dedicated Server - DS.CN.HK.BGP</h1><input name="configure" type="hidden" value="true"><input name="i" type="hidden" value="0"><input name="token" type="hidden" value="private-csrf"><label>Billing cycle<select name="billingcycle"><option value="monthly">Monthly</option><option value="annually">Annually</option></select></label><label>Memory<select name="configoption[40]"><option value="64">64G</option></select></label><label>Root password<input name="rootpw" type="password" value=""></label><div id="producttotal">Calculating</div><button id="continue">Continue</button></form></main><script>
       const form=document.getElementById('frmConfigureProduct');
       const send=async prefix=>{const response=await fetch('/cart.php',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:prefix+'&'+new URLSearchParams(new FormData(form))});return response.text();};
       const quote=async()=>{document.getElementById('producttotal').innerHTML=await send('ajax=1&a=confproduct&calctotal=true');};
@@ -26,7 +26,7 @@ test('WHMCS configuration quotes, AJAX continuation, coupons and checkout',{skip
     if(req.method==='POST'&&body.get('a')==='confproduct'){
       if(body.get('calctotal')==='true'){if(scenario.quoteStatus)res.statusCode=scenario.quoteStatus;setTimeout(()=>res.end('<span>CAD '+(body.get('billingcycle')==='annually'?1500:150)+'</span>'),scenario.quoteDelay||0);return;}
       if(body.get('addproductajax')==='1')return res.end('{}');
-      return res.end('');
+      setTimeout(()=>res.end(''),scenario.configurationDelay||0);return;
     }
     if(req.method==='POST'&&body.get('a')==='cyclechange')return res.end('');
     if(url.searchParams.get('a')==='view')return res.end(checkout(req.method==='POST'));
@@ -44,7 +44,7 @@ test('WHMCS configuration quotes, AJAX continuation, coupons and checkout',{skip
   };
   try{
     for(const dryRun of [true,false])await t.test(dryRun?'optional trial reaches checkout without creating an order':'restock submits once without a previous trial',async()=>{
-      scenario={dryRun,quoteDelay:120};const start=requests.length,before=orders.length;
+      scenario={dryRun,quoteDelay:120,configurationDelay:750};const start=requests.length,before=orders.length;
       const task=validateOrderTask({url:base+'/store',product:'DS.CN.HK.BGP',quantity:1,maxTotal:160,currency:'CAD',couponCode:'10%OFF',executionMode:'submit',monitorId:'monitor'});
       const user={id:'whmcs-test',monitors:[{id:'monitor',kind:'webpage',enabled:true}],orderTasks:[task],orderAccounts:[{monitorId:'monitor',loginUrl:task.url,revision:1,status:'saved',session:{state:{cookies:[],origins:[]},check:{url:task.url}}}]};
       const service=createOrderService({persist:()=>{},requestAI,siteMemory:{read:async()=>null,record:async()=>{}},openBrowser:(task,options)=>createOrderBrowser(task,{...options,launch:options=>chromium.launch({...options,executablePath:executable})})});
@@ -63,6 +63,10 @@ test('WHMCS configuration quotes, AJAX continuation, coupons and checkout',{skip
         assert.match(await browser.methods.text('#producttotal'),/1500/);
         await browser.methods.select('[name=billingcycle]','monthly');
         assert.equal(await browser.methods.text('#producttotal'),'CAD 150');
+        await browser.methods.cart('#continue',{configuration:true});
+        assert.equal(await browser.methods.matchesProduct('DS.CN.HK.BGP','Dedicated Server - DS.CN.HK.BGP'),true);
+        assert.equal(await browser.methods.matchesProduct('DS.CN.HK.BGP','Dedicated Server - DS.CN.HK.BGP V2'),false);
+        assert.equal(await browser.methods.matchesProduct('Another product','Dedicated Server - DS.CN.HK.BGP'),false);
         assert.equal(requests.slice(start).filter(request=>request.action==='cyclechange').length,2);
         assert.ok(!requests.slice(start).some(request=>request.action==='complete'));
         assert.ok(!JSON.stringify(browser.trace).includes('private-csrf'));

@@ -27,13 +27,14 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
     const result={};for(const [key,name]of Object.entries(map))if(bindings[key])result[name]=await resolve(bindings[key]);return result;
   };
   const read=async target=>{validateTarget(target);return methods.readSemantic(target);};
+  const productMatches=(expected,observed)=>methods.matchesProduct?methods.matchesProduct(expected,observed):matchesProductSelection(expected,observed);
   const verifyCart=async step=>{
     if(!step.bindings?.product||!step.bindings?.quantity)throw agentError('AGENT_STEP_UNVERIFIED','购物车缺少商品和数量证据');
     const product=await read(step.bindings.product),quantity=await read(step.bindings.quantity);
     const identity=order.product||order.productSelection?.text;
     const count=parseOrderQuantity(quantity.value??quantity.text);
-    if(normalize(product.text)&&(!identity||matchesProductSelection(identity,product.text))&&count>=1&&count<order.quantity&&(!['input','select','textarea'].includes(quantity.tag)||quantity.readOnly||quantity.disabled||quantity.type==='hidden'))throw quantityLimit(count,'网站当前购物车支持 '+count+' 件，将按该数量重新核价');
-    const matched=!!normalize(product.text)&&(!identity||matchesProductSelection(identity,product.text))&&parseOrderQuantity(quantity.value??quantity.text)===order.quantity;
+    if(normalize(product.text)&&(!identity||await productMatches(identity,product.text))&&count>=1&&count<order.quantity&&(!['input','select','textarea'].includes(quantity.tag)||quantity.readOnly||quantity.disabled||quantity.type==='hidden'))throw quantityLimit(count,'网站当前购物车支持 '+count+' 件，将按该数量重新核价');
+    const matched=!!normalize(product.text)&&(!identity||await productMatches(identity,product.text))&&parseOrderQuantity(quantity.value??quantity.text)===order.quantity;
     emit('购物车核验',{expected:{product:order.product,quantity:order.quantity},observed:{product:product.text,quantity:quantity.value??quantity.text},matched});
     if(!matched)throw agentError('AGENT_STEP_UNVERIFIED','购物车商品或数量与任务不符');
     pendingVerification=null;
@@ -77,7 +78,7 @@ export async function runCommerceAgent(program,order,session,{plan,signal,memory
         if(cartCorrection){
           assertCartQuantityCorrection(step,planInput);
           const product=await read(step.bindings.product),identity=order.product||order.productSelection?.text;
-          if(!normalize(product.text)||identity&&!matchesProductSelection(identity,product.text))throw agentError('AGENT_STEP_UNVERIFIED','修正数量前必须确认当前购物车商品与任务一致');
+          if(!normalize(product.text)||identity&&!await productMatches(identity,product.text))throw agentError('AGENT_STEP_UNVERIFIED','修正数量前必须确认当前购物车商品与任务一致');
         }
         if(pendingVerification==='cart'&&step.action==='review')await verifyCart(step);
         if(pendingVerification==='cart'&&step.action!=='verify_cart'&&!cartCorrection)throw agentError('AGENT_STEP_UNVERIFIED',"购物车操作后必须先核验商品和数量");

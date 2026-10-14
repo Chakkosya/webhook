@@ -7,6 +7,8 @@ export function pageType(page){
   const hasAction=pattern=>actions.some(el=>pattern.test(el.accessibleName||el.text||''));
   if(hasAction(/pay\s+(?:now|invoice)|支付账单|付款/i)&&/invoice|账单|發票/i.test(text))return 'invoice';
   if(hasAction(/place order|submit order|提交订单|确认下单/i))return 'checkout';
+  const billingFields=elements.some(el=>el.formRef&&['textbox','combobox'].includes(el.role)&&/^(?:address1|billing_address|billingaddress1|postcode|billing_postcode)$/i.test(el.name||''));
+  if(hasAction(/^checkout$|结账|确认结算/i)&&billingFields&&/payment details|payment method|付款方式|支付方式/i.test(text))return 'checkout';
   const entries=actions.filter(el=>/order now|buy now|购买|立即订购/i.test(el.accessibleName||el.text||''));
   if(new Set(entries.map(el=>el.regionRef||el.ref)).size>1)return 'catalog';
   if(hasAction(/checkout|结账|去结算/i)&&/quantity|qty|数量|total|总计|合计/i.test(text))return 'cart';

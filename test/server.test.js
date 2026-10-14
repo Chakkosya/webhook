@@ -1163,3 +1163,44 @@ test('账户代理更新保留各规则出口选择与检测基线，且凭据�
     await rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });
+
+
+test('monitor creation and AI revisions preserve independent optional purchase requirements', async () => {
+  const aiRequests=[];let responseOrder={product:'Widget',quantity:3,maxTotal:60,currency:'CAD',executionMode:'submit'};
+  const mock=http.createServer(async(req,res)=>{
+    if(req.url==='/product'){res.setHeader('content-type','text/html');return res.end('<h1>Widget</h1><main><p>Sold Out</p></main>');}
+    let raw='';for await(const part of req)raw+=part;
+    if(req.url==='/hook')return res.end('ok');
+    aiRequests.push(JSON.parse(raw));res.setHeader('content-type','application/json');
+    res.end(JSON.stringify({choices:[{message:{content:JSON.stringify({status:'ready',goal:{type:'product_stock',condition:{operator:'transition'}},...(responseOrder===undefined?{}:{order:responseOrder})})}}]}));
+  });
+  const mockPort=await listen(mock),url='http://127.0.0.1:'+mockPort+'/product';
+  const dataDir=await mkdtemp(path.join(tmpdir(),'radar-order-draft-')),{base,child}=await startApp(dataDir);
+  const bad=async(endpoint,method,body)=>{const r=await fetch(base+endpoint,{method,headers:{cookie:cookies.get(base),'content-type':'application/json'},body:JSON.stringify(body)});assert.equal(r.status,400);return r.json();};
+  try{
+    await request(base,'/api/settings','PUT',{webhooks:[{id:'hook',name:'Hook',url:'http://127.0.0.1:'+mockPort+'/hook',enabled:true}],aiBaseUrl:'http://127.0.0.1:'+mockPort+'/v1',aiModel:'test',aiKey:'test-key'});
+    const monitor={kind:'webpage',label:'Stock',url,keyword:'In Stock',mode:'contains',intervalMinutes:60};
+    const only=await request(base,'/api/monitors','POST',monitor);assert.equal(only.orderTasks.length,0);
+    await bad('/api/monitors','POST',{...monitor,order:{...responseOrder,url,maxTotal:''}});
+    assert.equal((await request(base,'/api/state')).monitors.length,1,'Invalid purchase must not partially save a monitor');
+    const created=await request(base,'/api/monitors','POST',{...monitor,order:{...responseOrder,url}});
+    const saved=created.monitors[0],task=created.orderTasks[0];assert.equal(task.monitorId,saved.id);assert.equal(task.quantity,3);assert.equal(task.enabled,false);assert.equal(task.executionMode,'submit');assert.equal(saved.order,undefined);
+    const full={...task,id:task.id,expectedRevision:task.revision};
+    const changed=await request(base,'/api/monitors/'+saved.id,'PATCH',{rule:{...monitor,label:'Changed',order:{...full,maxTotal:55}},expectedRevision:saved.revision||0});
+    assert.equal(changed.orderTasks.length,1);assert.equal(changed.orderTasks[0].maxTotal,55);assert.equal(changed.monitors[0].label,'Changed');
+    await bad('/api/monitors/'+saved.id,'PATCH',{rule:{...monitor,label:'Should not save',order:{...full,maxTotal:40}}});
+    assert.equal((await request(base,'/api/state')).monitors[0].label,'Changed');
+    const first=await request(base,'/api/parse','POST',{instruction:'监控商品补货后买3件，预算60 CAD',sourceUrl:url});
+    assert.equal(first.monitor.order.maxTotal,60);assert.equal(first.monitor.order.quantity,3);
+    responseOrder={maxTotal:45};
+    const revised=await request(base,'/api/parse','POST',{instruction:'只改下单预算为45 CAD',sourceUrl:url,draft:{...first.monitor,order:{...first.monitor.order,url,id:task.id,expectedRevision:2}}});
+    assert.equal(revised.monitor.order.maxTotal,45);assert.equal(revised.monitor.order.quantity,3);assert.equal(revised.monitor.order.id,task.id);
+    assert.ok(aiRequests.at(-1).messages.some(m=>m.content.includes('当前待确认草稿')&&m.content.includes('"maxTotal":60')));
+    assert.deepEqual(revised.monitor.condition,first.monitor.condition);
+    responseOrder=undefined;
+    const retained=await request(base,'/api/parse','POST',{instruction:'只改名称',sourceUrl:url,draft:revised.monitor});assert.equal(retained.monitor.order.maxTotal,45);
+    responseOrder=null;
+    const disabled=await request(base,'/api/parse','POST',{instruction:'仅监控，不下单',sourceUrl:url,draft:retained.monitor});assert.equal(disabled.monitor.order,null);
+    const removed=await request(base,'/api/monitors/'+saved.id,'PATCH',{rule:{...monitor,order:null}});assert.equal(removed.orderTasks.length,0);assert.equal(removed.monitors.length,2);assert.equal(removed.monitors[0].enabled,true);
+  }finally{child.kill();await new Promise(resolve=>child.once('exit',resolve));await rm(dataDir,{recursive:true,force:true});await new Promise(resolve=>mock.close(resolve));}
+});

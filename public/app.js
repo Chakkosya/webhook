@@ -685,14 +685,14 @@ function syncRevisionMode() {
   $('#instruction').placeholder = editing ? '例如：连续失败 3 次再提醒我，改成每 10 分钟检查一次，保留其他设置' : '例如：订单接口连续失败 3 次通知我；或明天上午 9 点提醒我开会';
 }
 function startAIRevision(monitor, editor) {
-  let config = monitorConfig(monitor);
+  let config = { ...monitorConfig(monitor), order: monitorOrderDraft(monitor) };
   if (editor?.closest('#task-workspace') && activeTaskId === monitor.id) {
     const pending = readSavedRule(editor, monitor);
     config = { ...config, ...pending.rule, webhookIds: pending.webhookIds };
   }
   const revision = editor?.closest('#task-workspace') && activeTaskId === monitor.id ? Number(editor.dataset.revision) : monitor.revision || 0;
   resetAssistant();
-  editingMonitor = { id: monitor.id, revision, original: monitorConfig(monitor), enabled: monitor.enabled };
+  editingMonitor = { id: monitor.id, revision, original: { ...monitorConfig(monitor), order: config.order }, enabled: monitor.enabled };
   assistantInstruction = '请协助我修改当前已创建的任务，保留未要求修改的设置。';
   previewMonitor = config;
   $('#instruction').value = '';
@@ -711,6 +711,17 @@ function revisionChanges(before, after) {
     if (JSON.stringify(a) !== JSON.stringify(b)) changes.push([label, show(a), show(b)]);
   };
   compare('任务名称', before.label, after.label);
+  if (before.kind !== 'reminder') {
+    compare('自动下单', Boolean(before.order), Boolean(after.order), value => value ? '配置购买要求' : '仅监控');
+    if (before.order || after.order) {
+      const a = before.order || {}, b = after.order || {};
+      for (const [key, label] of [['label','下单配置名称'],['product','购买商品'],['url','商品链接'],['quantity','最大购买数量'],['maxTotal','累计含税预算'],['currency','预算币种'],['instruction','购买要求'],['couponCode','优惠码'],['affiliateUrl','AFF 链接']]) compare(label, a[key], b[key]);
+      compare('执行范围', a.executionMode, b.executionMode, value => ({prepare:'提交前停止',submit:'提交订单',pay:'提交并付款'})[value] || '未配置');
+      compare('付款方式', a.paymentMethod, b.paymentMethod, value => value?.name || '未配置');
+      compare('优惠失效处理', a.couponFailurePolicy, b.couponFailurePolicy, value => value === 'continue' ? '按实际报价继续' : value === 'stop' ? '停止下单' : '未配置');
+      compare('下单 AI 辅助', a.autoRepair, b.autoRepair, value => value === false ? '关闭' : value === true ? '开启' : '未配置');
+    }
+  }
   compare('提醒级别', before.severity || 'warning', after.severity || 'warning', (value) => ({ info: '提示', warning: '一般', critical: '重要' })[value] || value);
   compare('关注地址', before.url || '', after.url || '');
   if (before.kind !== 'reminder') {
@@ -1096,6 +1107,7 @@ function renderPreview(monitor) {
     <div class="preview-note">${monitor.sourceNote ? `${escapeHtml(monitor.sourceNote)} ` : ''}${monitor.kind === 'generated' ? '请核对提醒条件。时间和通知选项可以直接调整，也可以继续用一句话修改需求。' : (monitor.kind === 'unified' && monitor.condition.initial === 'notify' || monitor.kind === 'dmit' && monitor.triggerMode === 'any-available') ? '首次检查发现有货会立即通知；持续有货不会重复发送。' : '首次检查只记录当前状态。后续条件发生变化时发送通知。'}${monitor.kind === 'generated' && monitor.plan.sourceType === 'html' ? ' 自动读取遇到网站验证会尝试浏览器；创建前会试跑一次。' : ''}${monitor.kind === 'dmit' ? '库存数据来自第三方，购买前请以官方页面为准。' : ''}</div>
     <div class="field-label">通知到</div><div id="preview-targets" class="target-options">${targetOptions(monitor.webhookIds)}</div>
     <div class="rule-editor">${taskEditor(monitor, 'rule')}</div>
+    ${renderOrderDraft(monitor)}
     <div id="preview-result" class="preview-result" aria-live="polite"></div><div class="preview-actions"><button class="button button-outline" id="preview-revise-button" type="button">修改需求</button><button class="button button-outline" id="preview-check-button" type="button">试跑一次</button><button class="button button-primary" id="create-button" type="button">确认并开始监控 <span>↗</span></button></div>`;
   if (monitor.assumptions?.length) {
     element.querySelector('.preview-grid, .rule-evidence').insertAdjacentHTML('afterend', '<div class="draft-assumptions"><strong>已为你采用的设置</strong><ul>' + monitor.assumptions.map((text) => '<li>' + escapeHtml(text) + '</li>').join('') + '</ul></div>');
@@ -1124,7 +1136,7 @@ function markPreviewChanged(event) {
 }
 $('#preview').addEventListener('rule-plan-updated', () => { renderRevisionDiff(); queueNotificationRefresh($('#preview .notification-editor')); });
 $('#preview').addEventListener('input', (event) => { renderRevisionDiff(); markPreviewChanged(event); if (!event.target.closest('.notification-editor')) queueNotificationRefresh($('#preview .notification-editor')); });
-$('#preview').addEventListener('change', (event) => { renderRevisionDiff(); updatePriorityVisibility($('#preview'), '#preview-targets'); toggleRepeatFields($('#preview'), 'rule'); markPreviewChanged(event); if (!event.target.closest('.notification-editor')) queueNotificationRefresh($('#preview .notification-editor')); });
+$('#preview').addEventListener('change', (event) => { if (event.target.id === 'draft-order-selected') $('#draft-order-fields').classList.toggle('hidden', !event.target.checked); renderRevisionDiff(); updatePriorityVisibility($('#preview'), '#preview-targets'); toggleRepeatFields($('#preview'), 'rule'); markPreviewChanged(event); if (!event.target.closest('.notification-editor')) queueNotificationRefresh($('#preview .notification-editor')); });
 document.addEventListener('change', (event) => {
   const editor = event.target.closest('.monitor-route');
   if (editor) {
@@ -1162,6 +1174,7 @@ function collectPreviewRule() {
     rule.repeatMinutes = repeatMinutesFrom($('#preview'), 'rule');
     return rule;
   }
+  rule.order = collectOrderDraft(previewMonitor.order);
   rule.intervalMinutes = readInterval($('#preview'), '#rule-interval');
   if (usesNetworkSource(rule)) { rule.fetch = readSourceFetch($('#preview'), rule); const proxy = readSourceProxy($('#preview'), rule); if (proxy) rule.sourceProxy = proxy; else delete rule.sourceProxy; rule.sourceProxyId = readSourceProxyId($('#preview')); }
   if ($('#rule-url')) rule.url = ($('#draft-url') || $('#rule-url')).value.trim();
@@ -1590,6 +1603,7 @@ $('#preview').addEventListener('click', (event) => {
       cancelAIRevision();
       render(true);
       toast('原任务已更新' + (target.enabled ? '' : '，仍保持暂停'));
+      if (rule.order) openTaskEditor(appState.monitors.find(m => m.id === target.id), 'order');
       return;
     }
     appState = await api('/api/monitors', 'POST', rule);
@@ -1604,6 +1618,7 @@ $('#preview').addEventListener('click', (event) => {
     render(true);
     toast(created.kind === 'reminder' ? '提醒已创建，等待首次发送' : created.lastError ? '监控已创建，首次检查失败：' + created.lastError : '监控已创建，首次检查已完成', Boolean(created.lastError));
     location.hash = '#monitors';
+    if (rule.order) { openTaskEditor(created, 'order'); toast('监控与购买要求已保存，请保存网站登录并启用下单'); }
   });
 });
 

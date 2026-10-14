@@ -34,3 +34,11 @@ test('configuration request diagnostics distinguish pricing from checkout withou
   assert.deepEqual(result.operations,['confproduct']);assert.equal(result.calculation,true);
   for(const value of ['private-csrf','private-password','private-option'])assert.ok(!JSON.stringify(result).includes(value));
 });
+
+
+test('combined checkout uses billing and payment evidence even with a Checkout button',async()=>{
+  const {pageType}=await import('../automation/adapters/generic-commerce.js');
+  const elements=[{role:'button',text:'Checkout',visible:true},{role:'textbox',name:'address1',formRef:'f1',visible:true},{text:'Total Due Today: USD 20',visible:true},{text:'Payment Details',visible:true}];
+  assert.equal(pageType({title:'Shopping Cart',elements}),'checkout');
+  assert.equal(pageType({title:'Shopping Cart',elements:elements.slice(0,3)}),'cart');
+});

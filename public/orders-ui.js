@@ -33,7 +33,7 @@ function orderTasks(){return appState.orderTasks||[];}
 function orderAccount(){return (appState.orderAccounts||[]).find(a=>a.monitorId===orderMonitorId);}
 function orderField(label,id,value='',type='text',extra=''){return '<label for="'+id+'">'+label+'<input id="'+id+'" type="'+type+'" '+extra+' value="'+escapeHtml(value)+'"></label>';}
 const orderCurrencies=[['CAD','加拿大元','Canadian Dollar'],['USD','美元','US Dollar'],['CNY','人民币','Chinese Yuan'],['HKD','港币','Hong Kong Dollar'],['EUR','欧元','Euro'],['JPY','日元','Japanese Yen'],['GBP','英镑','British Pound'],['AUD','澳大利亚元','Australian Dollar'],['SGD','新加坡元','Singapore Dollar'],['TWD','新台币','Taiwan Dollar'],['KRW','韩元','Korean Won'],['NZD','新西兰元','New Zealand Dollar'],['CHF','瑞士法郎','Swiss Franc'],['MOP','澳门元','Macau Pataca'],['THB','泰铢','Thai Baht'],['MYR','马来西亚林吉特','Malaysian Ringgit'],['IDR','印尼盾','Indonesian Rupiah'],['PHP','菲律宾比索','Philippine Peso'],['VND','越南盾','Vietnamese Dong'],['INR','印度卢比','Indian Rupee'],['AED','阿联酋迪拉姆','UAE Dirham'],['SAR','沙特里亚尔','Saudi Riyal'],['TRY','土耳其里拉','Turkish Lira'],['RUB','俄罗斯卢布','Russian Ruble'],['BRL','巴西雷亚尔','Brazilian Real'],['MXN','墨西哥比索','Mexican Peso'],['ZAR','南非兰特','South African Rand'],['SEK','瑞典克朗','Swedish Krona'],['NOK','挪威克朗','Norwegian Krone'],['DKK','丹麦克朗','Danish Krone'],['PLN','波兰兹罗提','Polish Zloty'],['CZK','捷克克朗','Czech Koruna'],['HUF','匈牙利福林','Hungarian Forint'],['ILS','以色列谢克尔','Israeli Shekel']];
-function orderCurrencyField(value){return orderField('预算币种（可搜索）','order-currency',value,'text','list="order-currencies" autocomplete="off" placeholder="搜索代码、中文或英文名称"')+'<datalist id="order-currencies">'+orderCurrencies.map(([code,zh,en])=>'<option value="'+code+'" label="'+zh+' · '+en+'">'+zh+' '+en+'</option>').join('')+'</datalist>';}
+function orderCurrencyField(value,prefix='order'){return orderField('预算币种（可搜索）',prefix+'-currency',value,'text','list="'+prefix+'-currencies" autocomplete="off" placeholder="搜索代码、中文或英文名称"')+'<datalist id="'+prefix+'-currencies">'+orderCurrencies.map(([code,zh,en])=>'<option value="'+code+'" label="'+zh+' · '+en+'">'+zh+' '+en+'</option>').join('')+'</datalist>';}
 function renderMonitorOrder(monitor){return monitor.kind!=='reminder'?'<div id="order-addon" data-monitor-id="'+escapeHtml(monitor.id)+'"></div>':'';}
 function mountMonitorOrder(monitor){
   resetOrderUI();if(!$('#order-addon'))return;orderMonitorId=monitor.id;
@@ -214,3 +214,36 @@ document.addEventListener('input',event=>{if(event.target.id==='order-payment-na
 window.addEventListener('pagehide',releaseOrderWindows);
 
 window.addEventListener('hashchange',()=>{if(!['#monitors','#orders'].includes(location.hash))releaseOrderWindows();});
+
+function monitorOrderDraft(monitor){
+  const candidates=orderTasks().filter(t=>t.monitorId===monitor.id&&!t.result&&!t.submissionStartedAt);
+  const task=candidates.find(t=>t.enabled||t.stockAuthorization)||candidates[0];
+  if(!task)return null;
+  const fields=['label','url','product','productSelection','instruction','quantity','maxTotal','currency','executionMode','affiliateUrl','paymentMethod','couponCode','couponFailurePolicy','autoRepair'];
+  return {...Object.fromEntries(fields.map(key=>[key,task[key]])),id:task.id,expectedRevision:task.revision};
+}
+function renderOrderDraft(monitor){
+  const order=monitor.order||{},enabled=Boolean(monitor.order);
+  const field=(label,key,value,type='text',extra='')=>orderField(label,'draft-order-'+key,value,type,extra);
+  const select=(label,key,value,choices)=>'<label for="draft-order-'+key+'">'+label+'<select id="draft-order-'+key+'">'+choices.map(([id,text])=>'<option value="'+id+'" '+(id===value?'selected':'')+'>'+text+'</option>').join('')+'</select></label>';
+  return '<section class="draft-order"><h3>监控触发后的动作</h3><label class="order-check"><input id="draft-order-selected" type="checkbox" '+(enabled?'checked':'')+'>同时配置自动下单</label><p class="field-help">监控与通知独立运行。勾选后可在这里填写或让 AI 修改购买要求，与监控一起保存。</p><div id="draft-order-fields" '+(!enabled?'class="hidden"':'')+'><div class="rule-fields">'
+    +field('配置名称','label',order.label||monitor.label||'')+field('商品名称或型号（选填）','product',order.product||'','text','maxlength="200"')
+    +field('商品链接','url',order.url||(/^https?:/.test(monitor.url||'')?monitor.url:''),'url')
+    +field('希望购买的最大数量','quantity',order.quantity??1,'number','min="1" max="10"')+orderCurrencyField(order.currency||'','draft-order')
+    +field('累计总价上限（含税费）','max-total',order.maxTotal??'','number','min="0.01" step="0.01"')
+    +field('优惠码（可选）','coupon',order.couponCode||'','text','maxlength="128"')
+    +select('优惠码失效时','coupon-policy',order.couponFailurePolicy||'stop',[['stop','停止下单'],['continue','按实际报价继续']])
+    +'<label class="editor-wide" for="draft-order-instruction">购买要求<textarea id="draft-order-instruction" rows="2" maxlength="2000" placeholder="例如：月付、8 GB 内存，其余默认">'+escapeHtml(order.instruction||'')+'</textarea></label>'
+    +select('执行范围','mode',order.executionMode||'submit',[['prepare','提交前停止'],['submit','提交订单'],['pay','提交并付款']])
+    +select('付款方式','payment-kind',order.paymentMethod?.kind||'balance',[['balance','账户余额'],['website','网站付款方式']])
+    +field('网站付款方式名称（使用余额时无需填写）','payment-name',order.paymentMethod?.kind==='website'?order.paymentMethod.name:'','text','placeholder="例如 Alipay、PayPal"')
+    +field('AFF 链接（可选）','affiliate',order.affiliateUrl||'','url')+'</div><label class="order-check"><input id="draft-order-auto-repair" type="checkbox" '+(order.autoRepair!==false?'checked':'')+'>页面变化时使用 AI 辅助</label><p class="field-help">保存后直接进入下单账户设置，保存登录并启用即可等待触发，无需提前试跑成功。每笔确认成功后继续购买剩余数量，累计含税费不超过上限；结果未知时停止。</p></div></section>';
+}
+function collectOrderDraft(previous){
+  if(!$('#draft-order-selected'))return undefined;
+  if(!$('#draft-order-selected').checked)return null;
+  const value=key=>$('#draft-order-'+key).value.trim(),number=key=>value(key)===''?'':Number(value(key));
+  const next={...previous,label:value('label'),product:value('product'),url:value('url'),quantity:number('quantity'),currency:value('currency').toUpperCase(),maxTotal:number('max-total'),couponCode:value('coupon'),couponFailurePolicy:value('coupon-policy'),instruction:value('instruction'),executionMode:value('mode'),paymentMethod:value('payment-kind')==='balance'?{kind:'balance',name:'账户余额'}:{kind:'website',name:value('payment-name')},affiliateUrl:value('affiliate'),autoRepair:$('#draft-order-auto-repair').checked};
+  if(previous?.productSelection&&(previous.url!==next.url||previous.product!==next.product))next.productSelection=null;
+  return next;
+}

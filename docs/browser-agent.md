@@ -241,3 +241,29 @@ node --test test/order-efficiency.test.js test/order-efficiency-browser.test.js 
 验证见 test/order-budget.test.js 与 test/order-budget-browser.test.js。真实 Chromium 用本地商城覆盖同名商品卡片、配置表单跳转、含税预算、数量折扣、优惠重新核价、限购分笔和各笔原账单付款；未据此宣称真实商城或真实模型的成功率。
 
 WHMCS 商品配置页支持 `frmConfigureProduct` 的 AJAX 请求映射：自动计价 `confproduct + calctotal`、周期切换 `cyclechange`、推荐查询与配置继续分别处理，核对当前购物车条目及完整表单参数。配置辅助响应完成后读取最新页面；最终订单提交仍单独核对商品、数量、币种和含税费总价。配置中的服务器 root 密码字段可保留网站默认值，私密值不进入 AI 输入或日志。未知写请求日志记录请求结构与已识别操作，不记录字段值。
+
+
+## 创建监控时配置购买要求
+
+规则预览中的“同时配置自动下单”默认关闭。启用后可编辑商品、最大数量、累计含税预算、可搜索币种、规格、优惠码、执行范围、付款方式和 AFF。AI 通过独立的 order 草稿字段创建或修改这些要求；只改监控时保留购买要求，只改数量时保留预算，order:null 表示取消关联。
+
+POST /api/monitors 同时校验并保存监控与独立下单任务；购买参数无效时两者都不新增。PATCH 的购买配置带下单任务 ID 和修订号，已经执行的订单保持历史记录；修改未执行的购买要求后需要重新启用。保存完成直接进入该监控的下单账户区域，保存登录并启用即可等待触发，可选试跑不作为启用前提。关闭下单配置不影响监控与通知。
+
+## 动作完成等待与真实商城验证
+
+automation/browser/action-settle.js 借鉴 [Stagehand 的 waitForDomNetworkQuiet](https://github.com/browserbase/stagehand/blob/stagehand-server-v3/v3.7.6/packages/core/lib/v3/handlers/handlerUtils/actHandlerUtils.ts) 的网络静稳等待：在点击前监听页面请求，在同站文档、XHR、fetch 完成并进入短暂安静窗口后读取下一页。使用现有 Playwright 执行器，不引入新浏览器框架。等待有总时限，超时不会重放已发送的配置请求。WHMCS 回归包含延迟 750 毫秒返回的配置请求。
+
+WHMCS 配置表单中的标题支持“分类名 - 商品名”，按完整型号后缀核对，型号扩展和不同容量仍不匹配。合并购物车与结账的页面使用账单字段、付款信息和结账按钮识别阶段。
+
+2026-10-14 的真实匿名浏览器验证使用 [FranTech 商品列表](https://my.frantech.ca/cart.php?gid=38) 的 NY RYZEN KVM 4GB：商品区域匹配、购买入口、配置页、20 USD 月付动态报价、配置提交与结账页均走通。测试通过项目浏览器执行器和实时元素绑定执行；没有向模型发送请求。可重跑的探测脚本为 .github/order-live-preflight.mjs，仅运行准备流程。
+
+| 验证项 | 结果 |
+| --- | --- |
+| FranTech 商品列表 → 配置 → AJAX 报价 → 结账 | 通过，匿名会话 |
+| 结账页账单信息与最终按钮 | 已读取，停在登录步骤 |
+| 延迟配置响应、精确型号、优惠与本地订单提交 | 自动回归覆盖 |
+| AI 创建/修改购买草稿、预算校验、独立保存、手机布局 | 浏览器回归覆盖 |
+
+### 已知限制
+
+VMISS 在本次测试出口返回网站验证页，未验证其真实登录后流程。FranTech 未提供测试账户，真实订单提交与付款未执行，税费取决于账单信息。真实模型对商城各阶段的识别成功率尚无量化数据；本地模拟商城的提交与付款测试用于验证执行协议。

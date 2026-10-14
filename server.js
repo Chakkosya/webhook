@@ -15,6 +15,7 @@ import { validateLocalSource, inspectLog, inspectService, userLogDirectory } fro
 import { WEBHOOK_FORMATS, createWebhookPayload, assertWebhookAccepted } from './lib/webhook.js';
 import { validateNotification, renderNotification, notificationSample } from './lib/notification.js';
 import { assistantMessages } from './lib/assistant.js';
+import { orderDraft, orderDraftFields, mergeOrderDraft } from './lib/order-draft.js';
 import { createStore } from './lib/store.js';
 import { createEmailCodeService } from './lib/email.js';
 import { createSourceFetcher, validateFetchOptions } from './lib/source-fetch.js';
@@ -717,6 +718,26 @@ async function checkSourceConnection(user, source, monitor = {}) {
   sourceCheckCache.set(cacheKey, { summary });
   return summary;
 }
+function prepareMonitorOrder(user, monitor, value) {
+  if (value === undefined) return () => {};
+  if (monitor.kind === 'reminder' && value) throw new Error('定时提醒不能绑定自动下单');
+  const candidates = user.orderTasks.filter(task => task.monitorId === monitor.id && !task.result && !task.submissionStartedAt);
+  const current = value?.id ? candidates.find(task => task.id === value.id) : candidates.find(task => task.enabled || task.stockAuthorization) || candidates[0];
+  if (value?.id && (current?.id !== value.id || current.revision !== value.expectedRevision)) throw new Error('下单配置已变化，请重新打开任务后保存');
+  if (current && value && !value.id) throw new Error('此监控已有下单配置，请重新打开任务后保存');
+  const next = value ? validateOrderTask({ ...orderDraft(value), monitorId: monitor.id }, current) : null;
+  if (current && next && orderDraftFields.every(key => JSON.stringify(current[key]) === JSON.stringify(next[key]))) return () => {};
+  if (current && orderService.isBusy(user, current)) throw new Error('下单任务正在执行，请等待结束后修改');
+  if (!current && next && user.orderTasks.filter(task => !task.result).length >= 10) throw new Error('最多同时保留 10 份未执行的下单配置');
+  return () => {
+    if (current) {
+      orderService.pause(user, current);
+      if (next) Object.assign(current, next);
+      else user.orderTasks = user.orderTasks.filter(task => task !== current);
+    } else if (next) user.orderTasks.unshift(next);
+  };
+}
+
 async function parseInstructionAttempt(user, instruction, sourceUrlInput, trace, conversationInput = [], repairFeedback = '', timeZoneInput = '', draftInput = null) {
   const input = String(instruction || '').trim();
   trace.instruction = input;
@@ -746,6 +767,7 @@ async function parseInstructionAttempt(user, instruction, sourceUrlInput, trace,
   trace.apiEndpoint = new URL(endpoint).origin + new URL(endpoint).pathname;
   let draft = null;
   try { if (draftInput) draft = validateMonitor(draftInput, { allowMissingSource: true, allowPastReminder: true }); } catch { /* the latest user instruction can repair an incomplete draft */ }
+  if (draft && draftInput?.order !== undefined) draft.order = draftInput.order;
   let pageAnalysis = null;
   if (/^https?:\/\//.test(sourceUrl) && (!draft || draft.kind === 'unified' && /修复|重新分析|换.*区域|检测方式/.test(fullInput))) {
     try {
@@ -774,6 +796,8 @@ async function parseInstructionAttempt(user, instruction, sourceUrlInput, trace,
     const content = String(result.choices?.[0]?.message?.content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
     parsed = JSON.parse(content);
   } catch { const error = new Error('AI 返回内容无法解析'); error.repairable = true; throw error; }
+  const purchase = mergeOrderDraft(Object.hasOwn(parsed || {}, 'order') ? parsed.order : parsed?.monitor?.order, draftInput?.order);
+  const withPurchase = monitor => monitor.kind === 'reminder' || purchase === undefined ? monitor : { ...monitor, order: purchase };
   if (parsed?.status === 'answer' && pageAnalysis && /监控|检查|检测|补货|有货.*通知|通知.*有货/.test(fullInput) && !/为什么|怎么|是不是|[吗？?]/.test(userTurns.at(-1) || input)) {
     parsed = { ...parsed, status: 'ready', goal: inferGoal(fullInput, draft) };
   }
@@ -848,7 +872,7 @@ async function parseInstructionAttempt(user, instruction, sourceUrlInput, trace,
     trace.ruleTests = built.attempts;
     delete built.rule.sourceProxy;
     attachRequestedLink(built.rule, fullInput);
-    return { status: 'ready', monitor: built.rule, parser: 'ai', analysis: built.analysis || analysisForAI(pageAnalysis), ...draftPresentation(parsed),
+    return { status: 'ready', monitor: withPurchase(built.rule), parser: 'ai', analysis: built.analysis || analysisForAI(pageAnalysis), ...draftPresentation(parsed),
       message: verifiedRuleMessage(built.rule), assumptions: verifiedRuleSettings(built.rule) };
   }
   let output = ['ready', 'draft'].includes(parsed?.status) && parsed.monitor ? parsed.monitor : parsed;
@@ -880,7 +904,7 @@ async function parseInstructionAttempt(user, instruction, sourceUrlInput, trace,
     let monitor;
     try { monitor = validateMonitor({ ...output, kind: 'generated', url: '', plan, label: output.label || '新监控' }, { allowMissingSource: true }); }
     catch (error) { error.repairable = true; throw error; }
-    return { status: 'draft', monitor, parser: 'ai', missing: ['source'], ...presentation,
+    return { status: 'draft', monitor: withPurchase(monitor), parser: 'ai', missing: ['source'], ...presentation,
       message: presentation.message || '我已拟好监控方案。填入你平时访问的网址，就可以试跑并确认创建。' };
   }
   const expectedUrl = sourceUrl || DMIT_STOCK_URL;
@@ -946,7 +970,7 @@ async function parseInstructionAttempt(user, instruction, sourceUrlInput, trace,
   try { normalized = await normalizeAiPlan(user, candidate, { instruction: draft ? userTurns.at(-1) || input : fullInput, analysis: pageAnalysis, ruleService, editing: Boolean(trace.editingMonitorId) || dmit && !sourceUrl, privateSourceProxy: draftInput?.sourceProxy || '', hasNotification: Boolean(output.notification) }); }
   catch (error) { if (error.code !== 'RULE_VALIDATION_FAILED') error.repairable = true; throw error; }
   attachRequestedLink(normalized, fullInput);
-  return { status: 'ready', monitor: normalized, parser: 'ai', sourceNote, ...presentation, ...(normalized.kind === 'unified' ? { message: verifiedRuleMessage(normalized), assumptions: verifiedRuleSettings(normalized) } : {}) };
+  return { status: 'ready', monitor: withPurchase(normalized), parser: 'ai', sourceNote, ...presentation, ...(normalized.kind === 'unified' ? { message: verifiedRuleMessage(normalized), assumptions: verifiedRuleSettings(normalized) } : {}) };
 }
 
 async function parseInstruction(user, instruction, sourceUrlInput, trace, conversationInput = [], timeZone = '', draftInput = null) {
@@ -1540,6 +1564,8 @@ async function handler(request, response) {
         if (user.monitors.length >= 100) throw new Error('每个账户最多创建 100 个监控任务');
         selectedWebhookIds(user, webhookIds);
         const monitor = { ...spec, ...proxySettings, ...(verification ? { last_test_result: verification, confidence: verification.confidence, status: 'active' } : {}), priority, webhookIds, pendingNotifications: [], id: randomUUID(), enabled: true, createdAt: new Date().toISOString(), baselined: false, snapshot: null, lastCheckAt: null, lastResult: '', lastError: '' };
+        const saveOrder = prepareMonitorOrder(user, monitor, body.order);
+        saveOrder();
         user.monitors.unshift(monitor);
         persist();
         if (monitor.kind !== 'reminder') await checkMonitor(user, monitor, { observed: verification?.snapshot });
@@ -1570,6 +1596,7 @@ async function handler(request, response) {
           ) ? await ruleService.test(user, { ...candidate, ...proxySettings }) : null;
           if (!user.monitors.includes(monitor)) return sendJson(response, 404, { error: '任务已删除，本次修改未应用' });
           if ((monitor.revision || 0) !== revision || activeChecks.has(monitor.id)) return sendJson(response, 409, { error: '任务在验证期间发生变化，请重新打开后保存', code: 'MONITOR_CHANGED' });
+          const saveOrder = prepareMonitorOrder(user, { ...candidate, id: monitor.id }, body.rule?.order);
           const updated = structuredClone(monitor);
           Object.assign(updated, proxySettings);
           let resetBaseline = false;
@@ -1624,6 +1651,7 @@ async function handler(request, response) {
           updated.revision = (monitor.revision || 0) + 1;
           for (const key of Object.keys(monitor)) if (!(key in updated)) delete monitor[key];
           Object.assign(monitor, updated);
+          saveOrder();
           persist();
           if ((resetBaseline || fetchChanged) && monitor.enabled && !nextVerification) await checkMonitor(user, monitor);
           scheduleMonitor(user, monitor);

@@ -57,6 +57,13 @@ jobs:
             -e UI_SMOKE_SCREENSHOT_DIR=/app/.data/rule-smoke-screenshots \
             --mount type=bind,src="$PWD/.github/monitor-rule-ui-smoke.mjs",dst=/app/monitor-rule-ui-smoke.mjs,readonly \
             "$IMAGE" node /app/monitor-rule-ui-smoke.mjs
+      - name: Verify optional purchase configuration during monitor creation
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:latest"
+          docker run --rm --init --read-only --tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 --cap-drop ALL --security-opt no-new-privileges:true \
+            -e UI_SMOKE_SCREENSHOT_DIR=/app/.data/order-draft-screenshots \
+            --mount type=bind,src="$PWD/.github/order-draft-ui-smoke.mjs",dst=/app/order-draft-ui-smoke.mjs,readonly \
+            "$IMAGE" node /app/order-draft-ui-smoke.mjs
       - name: Verify AI-generated order workflows without real purchases
         run: |
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:latest"
