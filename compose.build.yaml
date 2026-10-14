@@ -4,6 +4,7 @@ services:
       context: https://github.com/godluo666/webhook.git#main
       args:
         SOURCE_URL: https://github.com/godluo666/webhook
+        BUILDKIT_CONTEXT_KEEP_GIT_DIR: "1"
     image: ghcr.io/godluo666/webhook:latest
     pull_policy: build
     restart: unless-stopped

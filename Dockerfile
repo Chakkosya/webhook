@@ -1,12 +1,18 @@
+# syntax=docker/dockerfile:1
+FROM node:24-bookworm-slim AS revision
+ARG BUILD_REVISION
+RUN --mount=type=bind,target=/src \
+    if [ -n "$BUILD_REVISION" ]; then printf '%s\n' "$BUILD_REVISION"; \
+    else apt-get update >/dev/null && apt-get install -y --no-install-recommends git >/dev/null \
+      && git -c safe.directory=/src -C /src rev-parse HEAD; fi > /build-revision
+
 FROM ghcr.io/shadowsocks/sslocal-rust:v1.25.0 AS shadowsocks
 FROM node:24-bookworm-slim
 
 ARG SOURCE_URL
-ARG BUILD_REVISION=unknown
 LABEL org.opencontainers.image.source=$SOURCE_URL
 
 ENV NODE_ENV=production \
-    MONITOR_BUILD_REVISION=${BUILD_REVISION} \
     HOST=0.0.0.0 \
     PORT=3000 \
     DATA_DIR=/app/.data \
@@ -30,6 +36,9 @@ RUN npm ci --omit=dev --ignore-scripts \
     && chmod -R a+rX /opt/playwright \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
+ARG BUILD_REVISION
+ENV MONITOR_BUILD_REVISION=${BUILD_REVISION}
+COPY --from=revision /build-revision ./build-revision
 COPY --chown=node:node server.js ./
 COPY --chown=node:node lib ./lib
 COPY --chown=node:node automation ./automation

@@ -20,9 +20,8 @@ export function productContext(page,order={}){
 export function bindKnownProduct(step,page,order){
   const product=productContext(page,order);
   if(!product?.binding||!['cart','configure','verify_cart','review','apply_coupon','verify_coupon'].includes(step?.action))return step;
-  const supplied=step.bindings?.product;
-  // A conflicting product remains subject to the normal checkout verification.
-  if(supplied&&!product.refs.includes(supplied.ref))return step;
+  // Supplied bindings keep their original values for validation and checkout verification.
+  if(step.bindings!==undefined&&(!step.bindings||typeof step.bindings!=='object'||Array.isArray(step.bindings)||Object.hasOwn(step.bindings,'product')))return step;
   return {...step,bindings:{...step.bindings,product:product.binding}};
 }
 

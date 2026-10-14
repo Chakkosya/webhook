@@ -24,10 +24,15 @@ export function validateBusinessWorkflow(value){
     return {name:item.name.trim(),value:configured.trim()};
   })};
 }
-export function validateTarget(value){
+export function validateTarget(value,slot='target'){
+  const actual=Object.fromEntries(['meaning','ref','confidence'].map(key=>{
+    const received=value?.[key];
+    return [key,typeof received==='string'?received.slice(0,200):received&&typeof received==='object'?JSON.stringify(received).slice(0,200):received??null];
+  }));
+  const failure=(code,message)=>Object.assign(agentError(code,slot+'：meaning='+JSON.stringify(actual.meaning)+', ref='+JSON.stringify(actual.ref)+', confidence='+JSON.stringify(actual.confidence)+'；'+message),{slot,actual});
   if(value&&typeof value==='object')value={...value,meaning:typeof value.meaning==='string'?value.meaning.trim():value.meaning,ref:typeof value.ref==='string'?value.ref.trim():value.ref};
   if(!value||typeof value.meaning!=='string'||!/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(value.meaning)||value.meaning.length>300||typeof value.ref!=='string'||!/^e\d+$/.test(value.ref)||!Number.isFinite(value.confidence)||value.confidence<0||value.confidence>1)
-    throw agentError('AGENT_PLAN_INVALID','动作目标格式错误：meaning 必须是不超过 300 字符的小写 snake_case 英文语义，以字母开头，仅使用小写字母、数字和分隔用的单下划线，例如 purchase_entry、continue_to_cart；禁止中文、空格、自然语句，ref 使用当前页面元素编号，confidence 使用 0 到 1 的数字；请修正模型输出，不要询问用户。');
-  if(value.confidence<0.8)throw agentError('AGENT_LOW_CONFIDENCE','当前动作依据不足，请结合已提供的商品、所在区域和当前控件重新绑定。');
+    throw failure('AGENT_PLAN_INVALID','动作目标格式错误：meaning 必须是不超过 300 字符的小写 snake_case 英文语义，以字母开头，仅使用小写字母、数字和分隔用的单下划线，例如 purchase_entry、continue_to_cart；禁止中文、空格、自然语句，ref 使用当前页面元素编号，confidence 使用 0 到 1 的数字；请修正模型输出，不要询问用户。');
+  if(value.confidence<0.8)throw failure('AGENT_LOW_CONFIDENCE','当前动作依据不足，请结合已提供的商品、所在区域和当前控件重新绑定。');
   return {meaning:value.meaning,ref:value.ref,confidence:value.confidence};
 }

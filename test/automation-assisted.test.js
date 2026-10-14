@@ -346,10 +346,10 @@ test('page questions cannot ask again for an already specified billing choice',a
 });
 
 
-test('an explicit product name supplies the current checkout binding without another model question',async()=>{
+test('an explicit product name supplies a missing current checkout binding without another model question',async()=>{
   const f=serviceFixture({stepReply:input=>{
     const result=batch(input.page);
-    result.steps.at(-1).bindings.product={ref:input.page.targetProduct.binding.ref,meaning:'商品',confidence:0.4};
+    delete result.steps.at(-1).bindings.product;
     return result;
   }});
   await f.service.generate(f.user,f.task);
@@ -357,6 +357,23 @@ test('an explicit product name supplies the current checkout binding without ano
   assert.deepEqual(f.sessions[0].calls,['fill','select','review']);
 });
 
+test('service generation preserves invalid supplied product diagnostics in its error and execution log',async()=>{
+  let actual;
+  const f=serviceFixture({stepReply:input=>{
+    const result=batch(input.page);
+    actual={ref:input.page.targetProduct.binding.ref,meaning:'商品',confidence:0.4};
+    result.steps.at(-1).bindings.product=actual;
+    return result;
+  }});
+  await assert.rejects(f.service.generate(f.user,f.task),error=>{
+    assert.equal(error.code,'AGENT_PLAN_INVALID');assert.equal(error.slot,'bindings.product');assert.deepEqual(error.actual,actual);
+    return true;
+  });
+  assert.equal(f.assistance,2);assert.equal(f.submitted,0);assert.ok(!f.task.result);
+  assert.equal(f.sessions[0].submissionStarted,false);assert.deepEqual(f.sessions[0].calls,[]);
+  const logged=f.user.orderExecutionLogs[0].result.error;
+  assert.equal(logged.code,'AGENT_PLAN_INVALID');assert.equal(logged.slot,'bindings.product');assert.deepEqual(logged.actual,actual);
+});
 test('a valid live ref is executable even when an unlabelled field cannot produce a reusable locator',async()=>{
   for(const id of ['quantity-control',null]){
     const recipes=[],session=fixture({decorate:page=>{delete page.elements[1].name;delete page.elements[1].label;page.elements[1].id=id;return page;}});

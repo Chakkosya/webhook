@@ -241,7 +241,7 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
         }
         const observedRefs=new Set(observation.elements.map(el=>el.ref));
         const steps=(result.steps||[result]).map(value=>{
-          const validated=resolveValueSource(validateStep(bindKnownProduct(value,input.observation,input.order)),input);
+          const validated=resolveValueSource(bindKnownProduct(validateStep(value),input.observation,input.order),input);
           transformTargets(validated,(target,slot)=>{
             if(!observedRefs.has(target.ref))throw agentError('AGENT_ELEMENT_MISSING','动作引用了未提供的元素，请扩大当前商品区域并重新绑定当前 ref。');
             const displayed=observation.elements.find(el=>el.ref===target.ref);
