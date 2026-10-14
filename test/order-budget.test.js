@@ -1,3 +1,4 @@
+import {flowContext,assertFlowStep} from '../automation/agent/flow-template.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createOrderService,validateOrderTask} from '../lib/orders.js';
@@ -99,4 +100,9 @@ test('stock reduction uses the chosen card count and ignores conflicting region 
 test('optional preparation reduces quantity using the same live quote without creating an order',async()=>{
   const f=fixture({quantity:3,maxTotal:25});await f.service.generate(f.user,f.task);
   assert.equal(f.task.status,'ready');assert.equal(f.task.trial.review.quantity,2);assert.equal(f.task.quantity,3);assert.equal(f.orders.length,0);
+});
+
+test('submission-only planning excludes payment selection even when a merchant displays payment controls',()=>{
+  for(const executionMode of ['prepare','submit']){const input={order:{executionMode},context:{}};assert.ok(!flowContext(input).allowedActions.includes('choosePayment'));assert.throws(()=>assertFlowStep({action:'choosePayment'},input),{code:'AGENT_STEP_UNVERIFIED'});}
+  assert.ok(flowContext({order:{executionMode:'pay'}}).allowedActions.includes('choosePayment'));
 });

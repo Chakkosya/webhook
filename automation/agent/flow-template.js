@@ -20,6 +20,7 @@ export function flowContext({order={},context={}}){
   else if(context.pendingVerification==='coupon'){phase='verify_coupon';allowedActions=['verify_coupon','stop'];}
   else if(context.submissionStarted){phase='payment';allowedActions=['invoice','stop'];if(order.executionMode==='pay'&&context.receipt?.status==='ordered'&&!context.paymentStarted)allowedActions.push('pay');}
   else if(order.couponCode&&context.couponApplied!==true){allowedActions=allowedActions.filter(action=>action!=='review');allowedActions.push('apply_coupon');}
+  if(order.executionMode!=='pay')allowedActions=allowedActions.filter(action=>action!=='choosePayment');
   return {phase,allowedActions,stages:COMMERCE_TEMPLATE,optional:{cart:true,coupon:!!order.couponCode,payment:order.executionMode==='pay'}};
 }
 export function stageForAction(action){return COMMERCE_TEMPLATE.find(stage=>stage.actions.includes(action))?.id||'recovery';}

@@ -51,7 +51,7 @@ const mock=http.createServer(async(req,res)=>{
         result=action('configure',{target:bind('cart'),bindings:{product:bind('product')},configuration:[{name:'Cycle',target:target('cycle',cycle)}]});
       }else{
         const steps=[action('fill',{target:bind('quantity'),valueFrom:'quantity'}),action('select',{target:bind('billing'),value:'monthly'}),action('check',{target:bind('terms')})];
-        if(payment(false))steps.push(action('choosePayment',payment(false)));
+        if(order.executionMode==='pay'&&payment(false))steps.push(action('choosePayment',payment(false)));
         steps.push(action('review',{bindings:Object.fromEntries(['submit','product','quantity','total','currency'].map(name=>[name,bind(name)])),configuration:(evidence.workflow.requirements||[]).map(item=>({name:item.name,target:bind('billing')}))}));
         result={steps};
       }
@@ -299,6 +299,7 @@ try{
 
   }
 
+  actualGateway=true;gatewayRadio=true;
   available=false;await post('/api/monitors/'+monitor.id+'/check');
   await page.reload();await openMonitor();await newConfig();await fillForm('补货直接下单');
   const directOrders=createdOrders,directReads=productReads;await enable();current=await state();task=current.orderTasks[0];
