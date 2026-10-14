@@ -239,3 +239,5 @@ node --test test/order-efficiency.test.js test/order-efficiency-browser.test.js 
 补货触发按任务合并；无空闲位置或账户正忙时保留待执行项。释放执行位置后立即调度，账户忙时定期检查；暂停、删除、监控关闭或任务修订使待执行项失效。
 
 验证见 test/order-budget.test.js 与 test/order-budget-browser.test.js。真实 Chromium 用本地商城覆盖同名商品卡片、配置表单跳转、含税预算、数量折扣、优惠重新核价、限购分笔和各笔原账单付款；未据此宣称真实商城或真实模型的成功率。
+
+WHMCS 商品配置页支持 `frmConfigureProduct` 的 AJAX 请求映射：自动计价 `confproduct + calctotal`、周期切换 `cyclechange`、推荐查询与配置继续分别处理，核对当前购物车条目及完整表单参数。配置辅助响应完成后读取最新页面；最终订单提交仍单独核对商品、数量、币种和含税费总价。配置中的服务器 root 密码字段可保留网站默认值，私密值不进入 AI 输入或日志。未知写请求日志记录请求结构与已识别操作，不记录字段值。

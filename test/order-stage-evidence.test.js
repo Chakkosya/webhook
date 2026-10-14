@@ -28,3 +28,9 @@ test('configuration and bounded wait are separate planning actions',()=>{
   assert.equal(validateStep({action:'configure',reason:'continue current configuration'}).action,'configure');
   assert.equal(validateStep({action:'wait',reason:'settle current page',value:200}).action,'wait');
 });
+
+test('configuration request diagnostics distinguish pricing from checkout without exposing values',()=>{
+  const result=inspectRequestStructure({headers:()=>({'content-type':'application/x-www-form-urlencoded'}),postData:()=>new URLSearchParams({a:'confproduct',calctotal:'true',ajax:'1',token:'private-csrf',rootpw:'private-password','configoption[40]':'private-option'}).toString(),method:()=>'POST',url:()=>'https://merchant.example/cart.php'});
+  assert.deepEqual(result.operations,['confproduct']);assert.equal(result.calculation,true);
+  for(const value of ['private-csrf','private-password','private-option'])assert.ok(!JSON.stringify(result).includes(value));
+});
