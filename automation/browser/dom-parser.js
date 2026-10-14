@@ -1,6 +1,6 @@
 // Read the displayed selection separately from the merchant's submitted value.
 export function inspectCommerceField(el){
-  const text=(el.innerText||'').trim(),rawValue='value' in el?String(el.value):undefined;
+  const text=(el.innerText||'').trim(),rawValue=el.type==='password'?undefined:'value' in el?String(el.value):undefined;
   const label=(el.getAttribute('aria-label')||(el.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>document.getElementById(id)?.textContent||'').join(' ').trim()||[...(el.labels||[])].map(label=>label.textContent).join(' ')).replace(/\s+/g,' ').trim();
   const value=el.tagName==='SELECT'?[...el.selectedOptions].map(option=>option.textContent.trim()).join(' ')
     :['radio','checkbox'].includes(el.type)?el.checked?label:'':['INPUT','TEXTAREA'].includes(el.tagName)?rawValue:undefined;
@@ -12,6 +12,15 @@ export function inspectCommerceField(el){
 // Runs in the merchant page; strip executable content and private field values.
 export function inspectCommercePage(input){
   const {observationId,assignRefs=true}=typeof input==='string'?{observationId:input}:input;
+  const secrets=[...document.querySelectorAll('input')].filter(el=>el.type==='password').map(el=>el.value).filter(Boolean);
+  try{const cookies=document.cookie;if(cookies)secrets.push(cookies,...cookies.split(/;\s*/));}catch{}
+  const encoded=secrets.flatMap(value=>[value,value.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')]).sort((a,b)=>b.length-a.length);
+  const redact=value=>{
+    if(typeof value==='string')return encoded.reduce((text,secret)=>text.split(secret).join('[hidden]'),value);
+    if(Array.isArray(value))return value.map(redact);
+    if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,child])=>[key,redact(child)]));
+    return value;
+  };
   const readable=el=>(el.innerText||el.textContent||'').replace(/\s+/g,' ').trim();
   const labelText=el=>{const clone=el.cloneNode(true);clone.querySelectorAll('input,select,textarea,button').forEach(node=>node.remove());return readable(clone);};
   const visible=el=>!!el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden';
@@ -88,9 +97,9 @@ export function inspectCommercePage(input){
   // Preserve the hierarchy of every observed control, even after the outline limit.
   for(const node of nodes)for(let parent=node;parent&&!includedTreeNodes.has(parent);parent=parent.parentElement)includedTreeNodes.add(parent);
   const treeNodes=allTreeNodes.filter(el=>includedTreeNodes.has(el)),treeRefs=new Map(treeNodes.map((el,index)=>[el,'n'+index]));
-  const text=document.body.innerText||'',html=clone.outerHTML;
-  return {observationId,url:location.href,title:document.title,text:text.slice(0,24000),html:html.slice(0,64000),
+  const text=redact(document.body.innerText||''),html=redact(clone.outerHTML);
+  return redact({observationId,url:location.href,title:document.title,text:text.slice(0,24000),html:html.slice(0,64000),
     totalElements:nodes.length,totalDomNodes:allTreeNodes.length,
     truncated:{elements:false,forms:false,text:text.length>24000,html:html.length>64000,domTree:treeNodes.length<allTreeNodes.length},
-    domTree:treeNodes.map(el=>({node:treeRefs.get(el),parent:treeRefs.get(el.parentElement),elementRef:refs.get(el),tag:el.tagName.toLowerCase(),role:role(el)})),elements,forms};
+    domTree:treeNodes.map(el=>({node:treeRefs.get(el),parent:treeRefs.get(el.parentElement),elementRef:refs.get(el),tag:el.tagName.toLowerCase(),role:role(el)})),elements,forms});
 }

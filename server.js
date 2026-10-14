@@ -17,6 +17,7 @@ import { validateNotification, renderNotification, notificationSample } from './
 import { assistantMessages } from './lib/assistant.js';
 import { orderDraft, orderDraftFields, mergeOrderDraft } from './lib/order-draft.js';
 import { createStore } from './lib/store.js';
+import { requireCredentialHttps } from './lib/credentials.js';
 import { createEmailCodeService } from './lib/email.js';
 import { createSourceFetcher, validateFetchOptions } from './lib/source-fetch.js';
 import { createSharedSourceReader } from './lib/shared-source.js';
@@ -1110,7 +1111,10 @@ async function handler(request, response) {
       if(accountMatch){
         const monitor=user.monitors.find(m=>m.id===accountMatch[1]&&m.kind!=='reminder');
         if(!monitor)return sendJson(response,404,{error:'监控不存在'});
-        const action=accountMatch[2],body=['POST','PUT'].includes(request.method)?await readJson(request):{};
+        const action=accountMatch[2];
+        if(request.method==='POST'&&['start','action','finish'].includes(action))requireCredentialHttps(request);
+        const body=['POST','PUT'].includes(request.method)?await readJson(request):{};
+        if(body.username||body.password)requireCredentialHttps(request);
         if(request.method==='GET'&&!action)return sendJson(response,200,{account:publicOrderAccount(user.orderAccounts.find(a=>a.monitorId===monitor.id))});
         if(request.method==='PUT'&&!action)return sendJson(response,200,{account:orderAccountService.save(user,monitor,body)});
         if(request.method==='POST'&&action){
@@ -1125,7 +1129,9 @@ async function handler(request, response) {
         if (request.method === 'GET') return sendJson(response, 200, { tasks:user.orderTasks.map(publicOrderTask) });
         if (request.method === 'POST') {
           if (user.orderTasks.filter(t=>!t.result).length >= 10) throw new Error('最多同时保留 10 份未执行的下单配置');
-          const task = validateOrderTask(await readJson(request));
+          const input = await readJson(request);
+          if(input.username||input.password)requireCredentialHttps(request);
+          const task = validateOrderTask(input);
           if (!user.monitors.some(m=>m.id===task.monitorId && m.kind!=='reminder')) throw new Error('绑定的监控任务不存在');
           user.orderTasks.unshift(task); persist(); return sendJson(response, 201, {task:publicOrderTask(task)});
         }
@@ -1143,6 +1149,7 @@ async function handler(request, response) {
         const task = user.orderTasks.find(t=>t.id===orderMatch[1]);
         if (!task) return sendJson(response, 404, {error:'下单任务不存在'});
         const action = orderMatch[2], body = ['PUT','POST'].includes(request.method) ? await readJson(request) : {};
+        if(body.username||body.password)requireCredentialHttps(request);
         if(request.method==='GET'&&!action)return sendJson(response,200,{task:publicOrderTask(task)});
         if(request.method==='GET'&&action==='profile')return sendJson(response,200,{profile:await orderService.profile(user,task)});
         if (request.method === 'POST' && action === 'pause') return sendJson(response,200,{task:orderService.pause(user,task)});

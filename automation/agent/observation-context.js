@@ -1,4 +1,5 @@
 import {productContext} from './product-binding.js';
+import {redactAIInput} from './observation-privacy.js';
 const normalize=value=>String(value??'').normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
 const interactive=new Set(['link','button','textbox','spinbutton','combobox','checkbox','radio']);
 const MAX_ELEMENTS=96,MAX_CHARS=24000,MAX_OPTIONS=16;
@@ -39,9 +40,10 @@ function compactElement(el,terms,maxOptions){
 // The complete observation stays in the host for binding and transaction checks.
 // Assistance receives a bounded view selected by task evidence and DOM relationships.
 export function planningObservation(page,input={}){
+  page=redactAIInput(page);
   const expanded=input.expanded===true;
   const maxElements=expanded?288:MAX_ELEMENTS,maxChars=expanded?64000:MAX_CHARS,maxOptions=expanded?80:MAX_OPTIONS;
-  const terms=termsFor(input),all=(page.elements||[]).filter(el=>el.type!=='password'),focusRefs=new Set(input.focusRefs||[]),product=productContext(page,input.order);
+  const terms=termsFor(input),all=(page.elements||[]).filter(el=>String(el.type||'').toLowerCase()!=='password'),focusRefs=new Set(input.focusRefs||[]),product=productContext(page,input.order);
   for(const ref of product?.refs||[])focusRefs.add(ref);
   const ownScore=el=>scoreText([el.accessibleName,el.label,el.text,el.name].filter(Boolean).join(' '),terms);
   const relatedRegions=new Set(all.filter(el=>focusRefs.has(el.ref)||ownScore(el)>0).map(el=>el.regionRef).filter(Boolean));

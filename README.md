@@ -2,6 +2,45 @@
 
 支持多用户的通知与监控工作台。每个账户独立管理 Webhook、AI 设置、监控规则、自动下单、活动记录和排查日志。概览、智能创建、任务与提醒、快速发送、通知渠道、AI 设置、读取设置、活动与日志、账户安全分别占用独立页面；左侧导航可折叠，手机上可横向滑动切换。页面地址中的锚点可直达相应功能，浏览器前进后退也会切换页面。Docker 镜像包含所需依赖及监控浏览器。
 
+## Cloudflare 验证与账户凭证
+
+FlareSolverr 是可选侧车，默认关闭。它用独立浏览器处理验证，再把同域 Cookie 与 User-Agent 应用到订单浏览器；不会替换现有浏览器、Xvfb、代理或订单请求许可。账号会话保存 `cf_clearance` 与对应 User-Agent，后续操作优先恢复会话，不重复输入密码。
+
+### HTTPS 与加密存储
+
+账户凭证录入和远程登录必须通过 HTTPS，HTTP（包括 localhost）会被拒绝。在可信 HTTPS 反向代理后部署时，设置 `TRUST_PROXY=1`、`COOKIE_SECURE=1`；反向代理必须覆盖 `X-Forwarded-Proto` 为实际协议，后端只绑定回环地址或受控内网，不允许绕过代理直连。`COOKIE_SECURE` 本身不会提供 HTTPS。
+
+设置 `CREDENTIALS_KEY` 为 32 字节随机密钥的 64 位十六进制形式，可用 `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` 生成。密钥应独立备份，不提交到仓库。账户密码和会话存储加密后写入 `.data/`，已有明文数据在配置密钥后迁移；缺少密钥时拒绝写入敏感数据，错误密钥不会覆盖原数据。丢失密钥后无法恢复已有凭证。旧备份中的明文需要单独清理。
+
+### 启用 FlareSolverr
+
+Compose 同目录的 `.env` 设置：
+
+```dotenv
+FLARESOLVERR_ENABLED=1
+FLARESOLVERR_URL=http://flaresolverr:8191/v1
+FLARESOLVERR_TIMEOUT_MS=60000
+FLARESOLVERR_SESSION_TTL=15
+```
+
+`FLARESOLVERR_SESSION_TTL` 单位为分钟，默认 15。客户端使用 v1 API（核对 FlareSolverr v3.5.2 README）：`sessions.create`、`request.get`、`sessions.destroy`。会话按账户、站点及代理隔离，过期销毁重建。URL 可填写服务根地址或完整 `/v1` 地址。
+
+```sh
+docker compose --profile flaresolverr up -d --wait --wait-timeout 300 flaresolverr
+docker compose up -d webhook-radar
+```
+
+侧车只有 Docker 内网 `8191`，没有宿主机端口映射；不要为它添加 `ports`。首次启动较慢，健康检查通过后再启动业务。源码构建部署使用同样命令并增加 `-f compose.build.yaml`。关闭时设置 `FLARESOLVERR_ENABLED=0` 并重建业务容器，原挑战处理保持不变。
+
+检测到挑战后，订单浏览器尝试解验证并重新读取页面。trace 的「FlareSolverr 解验证」只包含成功状态、耗时及是否取得 clearance，不记录 Cookie 值。解不开时转入人工处理：打开该账户的登录窗口完成验证，确认登录后保存会话，再重试 generate/trial。提交或付款已经开始时不再启动解验证或重新发送交易。
+
+### 已知限制
+
+- FlareSolverr 的价值是浏览器解耦，不保证通过 Cloudflare。它也需要干净的出口 IP，通过率会随 Cloudflare 更新波动。
+- 侧车与主浏览器必须使用一致的出口；代理地址必须从两个容器都可达，侧车中的 `127.0.0.1` 不指向业务容器。短期本机代理需改为侧车可达的代理配置。
+- 人工验证仍可能受站点策略限制。只取得 clearance 不等于账户已登录，保存账户会话仍需通过原有登录校验。
+- 本地模拟测试覆盖 cookie 注入、User-Agent、完整 dry-run 和人工降级；`https://app.vmiss.com/` 的真实解验证验收需在有 FlareSolverr 的环境执行。
+
 ## Docker Compose 部署
 
 安装 Docker 后，在服务器运行一条命令：
@@ -72,6 +111,12 @@ node server.js
 | `DATA_DIR` | 数据目录，默认项目内 `.data` |
 | `SIGNUP_CODE` | 设置后，新用户注册必须填写此邀请码 |
 | `COOKIE_SECURE=1` | 经 HTTPS 访问时，为登录 Cookie 加上 Secure 标志 |
+| `CREDENTIALS_KEY` | 64 位十六进制凭证加密密钥；保存账户密码或会话前必须配置 |
+| `TRUST_PROXY=1` | 仅在可信 HTTPS 反向代理后启用，接受代理覆盖的协议标头 |
+| `FLARESOLVERR_ENABLED` | 默认 `0`；设为 `1` 启用侧车解验证 |
+| `FLARESOLVERR_URL` | 默认 `http://flaresolverr:8191/v1`，仅使用受信内网服务 |
+| `FLARESOLVERR_TIMEOUT_MS` | 默认 `60000`，解验证超时（毫秒） |
+| `FLARESOLVERR_SESSION_TTL` | 默认 `15`，侧车会话有效期（分钟） |
 | `RESEND_API_KEY` | 邮箱验证码发信服务的 API Key |
 | `MAIL_FROM` | 发件地址，须属于已在 Resend 验证的域名 |
 | `HTTP_PROXY` / `HTTPS_PROXY` | Node.js 24.14+ 会自动使用代理，并跳过本地地址；较旧版本请通过运行环境配置网络 |

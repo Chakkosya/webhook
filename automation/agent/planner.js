@@ -1,4 +1,5 @@
 import {pageType} from '../adapters/generic-commerce.js';
+import {redactAIInput} from './observation-privacy.js';
 import {stopError} from './clarification.js';
 import {bindKnownProduct} from './product-binding.js';
 import {flowContext} from './flow-template.js';
@@ -33,7 +34,7 @@ export function validateStep(value){
 export function createPlanner(requestAI){
   return async ({order,workflow,observation,history,memory,context,feedback,signal,image,flow})=>{
     const {userClarification,...orderGoal}=order;
-    const content=JSON.stringify({order:orderGoal,workflow:{version:workflow.version,requirements:workflow.requirements},userClarification:userClarification?{...pick(userClarification,['url','action','code','requirement','expected','observed']),question:String(userClarification.question||'').slice(0,1000),answer:String(userClarification.answer||'').slice(0,1500)}:undefined,flow:flow||flowContext({order,context}),page:observation,history:recentHistory(history),siteProfile:memory?{pageTypes:memory.pageTypes?.slice(-10),flowCharacteristics:pick(memory.flowCharacteristics,['cart','apply_coupon','invoice','pay']),elementSemantics:memory.elementSemantics?.slice(-24)}:null,context:planningContext(context),feedback:planningFeedback(feedback)});
+    const content=JSON.stringify(redactAIInput({order:orderGoal,workflow:{version:workflow.version,requirements:workflow.requirements},userClarification:userClarification?{...pick(userClarification,['url','action','code','requirement','expected','observed']),question:String(userClarification.question||'').slice(0,1000),answer:String(userClarification.answer||'').slice(0,1500)}:undefined,flow:flow||flowContext({order,context}),page:observation,history:recentHistory(history),siteProfile:memory?{pageTypes:memory.pageTypes?.slice(-10),flowCharacteristics:pick(memory.flowCharacteristics,['cart','apply_coupon','invoice','pay']),elementSemantics:memory.elementSemantics?.slice(-24)}:null,context:planningContext(context),feedback:planningFeedback(feedback)}));
     const userContent=image?[{type:'text',text:content},{type:'image_url',image_url:{url:image}}]:content;
     const output=await requestAI([{role:'system',content:STEP_PROMPT+'\n'+ASSIST_PROMPT+'\n'+RECOVERY_PROMPT+'\n'+CLARIFICATION_PROMPT},{role:'user',content:userContent}],{signal});
     try{

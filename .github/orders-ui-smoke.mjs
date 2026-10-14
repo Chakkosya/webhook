@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { chromium } from 'playwright-core';
 const listen=s=>new Promise(r=>s.listen(0,'127.0.0.1',()=>r(s.address().port)));
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
-const root=process.cwd(), dataDir=await fs.mkdtemp(path.join(tmpdir(),'radar-orders-ui-'));
+// Public self-signed localhost TLS fixtures; only smoke contexts accept this certificate.
+const key="-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCMZwGphjjAcpKT\nCeqol3I6qfUcTRA+M6mj+uLiwlPBxFRAby2VxdKSe78KI0UJ4WiIcgjbF/43QIqG\nBrDkMLkgBviF7AP5iL93EMYi2mDVNPaRyuEaWEzKhPn9Ap9UsXJK+LKiQJt/ZqNt\nvXGO0lL0mDtUkl+reeegVGQLrUGQ7URy2JLRor5BFJbxTwiP7ArBe17D75QnpvQo\nw817oTeO7UgF/yzEJunrW3eVqXIYd0VoDEpZiuShMBj7MpyGOUmdvr5SHKZ/xA8m\nQv05lGq18HYRWjYNMFtZiMRGSSRs1kG21AFMN07TzxZtFZ1ZDLcmVhIC2QPvixZ2\nS73GhUkvAgMBAAECggEABt4Y++5OcQ5Ae990qSm8ZUoNo7s/QqXrRhzgbKAQCJoc\nDcA5SGE/1Xkmy/umGBHYJVYk5S12ens/faKluIlnAVBBZ1VJa6DBzn3Hn9xg0uGI\nik5dg6sp4mruAW9FVOBp+Pr3XeTK+u1ErDFIPg0/NM95ulGkAemU8RER9tkcLCAt\nh/mkGeUCZeDkaxzxBaUzPQ9RKWLwfMLTiV8GVnQK+CJl8/Ok+eukMdHMd5tfkeqr\ndV9hiFKbq5h/VSkO66x1zXUzDiMuw/E9fHey90RoDv94lVRJB63W4coEWlxG9yEH\nxSA5YTIJXLTgNDz5DpwatVO6jSkdapSJzTv6lKWk3QKBgQDETGvuhnRCMKQj9C+V\nbHVaVyYZdcsWpwHN2ulXqsqeBD/nJUC+j3fqvQ7Iuj7wKiMiCZzfZohLPOn8nUI0\nxLL1GbV3lFhz8Diw5B9Sqvjd/HKucRSD3d8T8/G3ADgpEsC/nbmsbXdmzeeL6Vei\nV8s1sir7tkRJ8tpBdvyL6sudTQKBgQC3GpMJWkWXhxHX+08GDLbsG0A+jtlTBjUV\nW7LFSHoT45C97+6hmfVcVAuBpyZIQsoDuthZUX7CCP+hID1Nn5x4WzSJQRHyu1o4\nd+dq9Sa6ycNb8jrLiwAkjnr1Zl7RiqxHauhbOa/5vPOCjcdhWt4ohNo9SPOB6/g2\ndfUrFreyawKBgAIfpYdGExnoNs5gxOcD7l0U1keuO406L03P0XhuU5TUDPDuOT4W\nhUCX3QIU6btlaU3j9rt/+3d86DcgaGfzvM/kAE+T3kUa0zIutZwKV3jnU0JJ3OP0\nUYaAvBuzt+fR2R35kdmosYL+NUQROS57bqpdDBP/C8wVAYF1zROibaN9AoGAD0ej\nb4td9VgrMAfjv1B+T1Oy18WZ8yi4c1DUqUv0DAbYhFEqa8fqRssorqghNLSGISuN\ndF6tokmX8306QGkKaKzLxIxuj//8dmvjHvTYR4wgxmJ/b47o8yQEtMfXL8tPtyH/\nw+Ubf066T3G/aqtnkKANikG1OGlVrE3JqM/bgoMCgYBGGzbagTbeY1ZYXMDYnm8b\nj46CpW0BZ3rDRBeyIwz42EqH8GN+VpVCyeUESufvmJ0ZRivZwc0hJn0Y6zWhf4Ae\niWokL8S2YLQYdxYTwVztWnJonpYtluty00liSZvMHqbAEUlnznW1aTOv1QKf10RU\nsWTmrYj1kbogeeSgGeYLvQ==\n-----END PRIVATE KEY-----\n";
+const cert="-----BEGIN CERTIFICATE-----\nMIIDJTCCAg2gAwIBAgIUJf9TGTWi+5p5nb53GDk9skeW8fQwDQYJKoZIhvcNAQEL\nBQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MTAwNjAzNDkwOVoXDTM2MTAw\nMzAzNDkwOVowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF\nAAOCAQ8AMIIBCgKCAQEAjGcBqYY4wHKSkwnqqJdyOqn1HE0QPjOpo/ri4sJTwcRU\nQG8tlcXSknu/CiNFCeFoiHII2xf+N0CKhgaw5DC5IAb4hewD+Yi/dxDGItpg1TT2\nkcrhGlhMyoT5/QKfVLFySviyokCbf2ajbb1xjtJS9Jg7VJJfq3nnoFRkC61BkO1E\nctiS0aK+QRSW8U8Ij+wKwXtew++UJ6b0KMPNe6E3ju1IBf8sxCbp61t3lalyGHdF\naAxKWYrkoTAY+zKchjlJnb6+Uhymf8QPJkL9OZRqtfB2EVo2DTBbWYjERkkkbNZB\nttQBTDdO088WbRWdWQy3JlYSAtkD74sWdku9xoVJLwIDAQABo28wbTAdBgNVHQ4E\nFgQUiqg0wOBhXHIiXQcKzq8W9pAq1CgwHwYDVR0jBBgwFoAUiqg0wOBhXHIiXQcK\nzq8W9pAq1CgwDwYDVR0TAQH/BAUwAwEB/zAaBgNVHREEEzARgglsb2NhbGhvc3SH\nBH8AAAEwDQYJKoZIhvcNAQELBQADggEBAD1S5R1qpJ40zoNmep/nxvqq2J8zOQOc\nnGY+c0GRb1l0MBPShEQxqqdraQiiNTPv3Q5I0VeE8ZzjStiTuVIOi/6/bBV77yu5\nnszwarCLJEYPYna1VbCXm7eziVe7YqpI/W7/gCuPV6QKl6e3g03zVob5cQh0/e9+\nm92zm4djfmgbnYVawDeiYWJ+i4H0W2nrzMkoCHerr+feiPJ8GC4Oq8GWVurIVpXX\nJZQLEuNuWPgb1/Li0bM0wSTL1AORwYQtfuMHKK40QqQf+HoPoppmGWTughME8bPR\nteUjN9VYc+Huc0pW8aSZXlclJqwyV8TzNfLLJx0RM7AxYHh2BrXgM0k=\n-----END CERTIFICATE-----\n";
+const root=process.cwd(), dataRoot=path.resolve(process.env.UI_SMOKE_DATA_ROOT||root), dataDir=await fs.mkdtemp(path.join(dataRoot,'radar-orders-ui-'));
+const credentialsKey=randomBytes(32).toString('hex');
 const nonce=randomBytes(4).toString('hex'), id=key=>key+'-'+nonce;
 let available=false,total=9.5,createdOrders=0,paymentRequests=0,paidOrders=0,invoiceExtra=0,invoiceCurrency="USD",loginRequests=0,affiliateVisits=0,affiliateOrders=0,expired=false,layoutChanged=false,affWorking=true,requireOtp=true,sessionSequence=0,validSession='logged-in';
 let stalledAI=0,droppedProgress=0;
@@ -106,13 +110,20 @@ const mock=http.createServer(async(req,res)=>{
   res.writeHead(404);res.end();
  }catch(error){errors.push(error.message);res.writeHead(500);res.end(error.message);}
 });
-let browser,child,page;
+let browser,child,page,appPort;
+const tlsProxy=https.createServer({key,cert},(req,res)=>{
+  const upstream=http.request({hostname:'127.0.0.1',port:appPort,path:req.url,method:req.method,headers:{...req.headers,'x-forwarded-proto':'https'}},response=>{
+    res.writeHead(response.statusCode,response.headers);response.pipe(res);
+  });
+  upstream.on('error',()=>{res.writeHead(502);res.end();});req.pipe(upstream);
+});
 try{
-  sourceBase='http://127.0.0.1:'+await listen(mock);cashierBase='http://127.0.0.1:'+await listen(cashier);const reserve=http.createServer(),port=await listen(reserve);await new Promise(r=>reserve.close(r));const base='http://127.0.0.1:'+port;
+  sourceBase='http://127.0.0.1:'+await listen(mock);cashierBase='http://127.0.0.1:'+await listen(cashier);const reserve=http.createServer(),port=await listen(reserve);await new Promise(r=>reserve.close(r));appPort=port;const backend='http://127.0.0.1:'+port,base='https://127.0.0.1:'+await listen(tlsProxy);
   const executable=process.env.MONITOR_BROWSER_EXECUTABLE||(process.platform==='win32'?'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe':'/usr/bin/chromium');
-  child=spawn(process.execPath,['server.js'],{cwd:root,windowsHide:true,stdio:'ignore',env:{...process.env,DATA_DIR:dataDir,HOST:'127.0.0.1',PORT:String(port),MONITOR_BROWSER_EXECUTABLE:executable,ORDER_AI_TIMEOUT_MS:'1000',RESEND_API_KEY:'',MAIL_FROM:'',SIGNUP_CODE:''}});
-  for(let i=0;i<100;i++){try{if((await fetch(base+'/api/auth/status')).ok)break;}catch{}await pause(50);}
-  browser=await chromium.launch({executablePath:executable,headless:true,args:['--no-sandbox']});const context=await browser.newContext({viewport:{width:1440,height:1000},timezoneId:'America/Los_Angeles'});
+  const appEnv={...process.env,NODE_ENV:'production',TRUST_PROXY:'1',CREDENTIALS_KEY:credentialsKey,DATA_DIR:dataDir,MONITOR_TEMP_DIR:path.join(dataDir,'browser'),TMPDIR:dataDir,TMP:dataDir,TEMP:dataDir,HOST:'127.0.0.1',PORT:String(port),MONITOR_BROWSER_EXECUTABLE:executable,ORDER_AI_TIMEOUT_MS:'1000',RESEND_API_KEY:'',MAIL_FROM:'',SIGNUP_CODE:''};
+  child=spawn(process.execPath,['server.js'],{cwd:root,windowsHide:true,stdio:'ignore',env:appEnv});
+  for(let i=0;i<100;i++){try{if((await fetch(backend+'/api/auth/status')).ok)break;}catch{}await pause(50);}
+  browser=await chromium.launch({executablePath:executable,headless:true,args:['--no-sandbox'],env:{...process.env,TMPDIR:dataDir,TMP:dataDir,TEMP:dataDir}});const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:1000},timezoneId:'America/Los_Angeles'});
   await context.route(/\/api\/order-tasks\/[^/]+$/,async route=>{if(route.request().method()==='GET'&&droppedProgress===0){droppedProgress++;await route.abort('failed');}else await route.continue();});
   const post=async(endpoint,data={})=>{const r=await context.request.post(base+endpoint,{data});assert.ok(r.ok(),await r.text());return r.json();};
   const state=()=>context.request.get(base+'/api/state').then(r=>r.json());
@@ -120,7 +131,20 @@ try{
   const settings=await context.request.put(base+'/api/settings',{data:{aiKey:'ai-fixture-key',aiModel:'fixture',aiBaseUrl:sourceBase+'/v1',webhooks:[{id:'hook',name:'下单通知',format:'generic',enabled:true,url:sourceBase+'/hook'}]}});assert.ok(settings.ok());
   const monitor=(await post('/api/monitors',{kind:'webpage',label:'商品补货',url:sourceBase+'/product',keyword:'available',mode:'contains',intervalMinutes:60,webhookIds:['hook'],fetch:{mode:'http',proxy:'direct'}})).monitors[0];
   const accountPath='/api/monitors/'+monitor.id+'/order-account';
-  page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(base+'/#monitors');
+  const cookie=(await context.cookies(base)).map(item=>item.name+'='+item.value).join('; ');
+  for(const action of ['start','action','finish']){
+    const rejected=await fetch(backend+accountPath+'/'+action,{method:'POST',headers:{cookie,'content-type':'application/json'},body:'{}'});
+    assert.equal(rejected.status,403,'Plain HTTP credential '+action+' must be rejected');
+  }
+  const readEncryptedAccount=async()=>{
+    const stored=JSON.parse(await fs.readFile(path.join(dataDir,'state.json'),'utf8'));
+    const account=stored.users.flatMap(user=>user.orderAccounts||[]).find(account=>account.monitorId===monitor.id);
+    assert.equal(account.session.encrypted,'aes-256-gcm');
+    assert.equal(JSON.stringify(stored).includes(password),false);
+    assert.equal(JSON.stringify(stored).includes(validSession),false);
+    return account.session;
+  };
+  page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(base+'/#monitors');assert.equal(new URL(page.url()).protocol,'https:');
   const openMonitor=async()=>{await page.locator('[data-action="edit"][data-id="'+monitor.id+'"]').click();await page.locator('#order-addon').waitFor();};await openMonitor();
   assert.equal(await page.locator('a[href="#orders"]').count(),0);assert.equal(await page.locator('#order-monitor-choices').count(),0);
   await page.locator('#order-login-url').fill(sourceBase+'/login');await page.locator('[data-order-account-action="start"]').click();await page.locator('#order-login-image').waitFor({timeout:30000});
@@ -251,12 +275,14 @@ try{
   await page.locator('[data-order-account-action="check"]').click();await page.waitForFunction(()=>document.querySelector('#order-account-status')?.textContent.includes('已保存'));
   await newConfig();await fillForm('跨页面修复');await page.locator('#order-url').fill(sourceBase+'/config');const beforeCart=aiRequests.length;await generate();assert.equal(aiRequests.length-beforeCart,3);assert.equal(createdOrders,3);await enable();await run();assert.equal(createdOrders,4);
   await newConfig();await fillForm('可停止生成');await page.locator('#order-instruction').fill('hold-to-cancel');const pending=aiRequests.length;await page.locator('[data-order-editor-action="generate"]').click();for(let i=0;i<150&&aiRequests.length===pending;i++)await pause(50);assert.ok(aiRequests.length>pending);await page.locator('#order-cancel').click();await page.waitForFunction(()=>document.querySelector('[data-order-editor-action="generate"]')?.disabled===false,{timeout:20000});assert.equal((await state()).orderTasks[0].enabled,false);assert.equal(createdOrders,4);
-  const other=await browser.newContext();await other.request.post(base+'/api/auth/register',{data:{username:'order-ui-other',password:'order-ui-password-123'}});assert.equal((await other.request.get(base+accountPath)).status(),404);assert.equal((await other.request.get(base+orderLogPath)).status(),404);assert.equal((await other.request.post(base+'/api/order-tasks/'+task.id+'/run',{data:{}})).status(),404);await other.close();
+  const other=await browser.newContext({ignoreHTTPSErrors:true});await other.request.post(base+'/api/auth/register',{data:{username:'order-ui-other',password:'order-ui-password-123'}});assert.equal((await other.request.get(base+accountPath)).status(),404);assert.equal((await other.request.get(base+orderLogPath)).status(),404);assert.equal((await other.request.post(base+'/api/order-tasks/'+task.id+'/run',{data:{}})).status(),404);await other.close();
   const operationIdsBeforeRestart=(await readLogs()).operations.map(log=>log.id);
+  await readEncryptedAccount();
   // Saved credentials survive an app restart; interrupted operations never resume.
-  child.kill();await new Promise(r=>child.exitCode!==null?r():child.once('exit',r));child=spawn(process.execPath,['server.js'],{cwd:root,windowsHide:true,stdio:'ignore',env:{...process.env,DATA_DIR:dataDir,HOST:'127.0.0.1',PORT:String(port),MONITOR_BROWSER_EXECUTABLE:executable}});
-  for(let i=0;i<100;i++){try{if((await fetch(base+'/api/auth/status')).ok)break;}catch{}await pause(50);}
+  child.kill();await new Promise(r=>child.exitCode!==null?r():child.once('exit',r));child=spawn(process.execPath,['server.js'],{cwd:root,windowsHide:true,stdio:'ignore',env:appEnv});
+  for(let i=0;i<100;i++){try{if((await fetch(backend+'/api/auth/status')).ok)break;}catch{}await pause(50);}
   assert.deepEqual((await readLogs()).operations.map(log=>log.id),operationIdsBeforeRestart,'Logs survive service restart');
+  await readEncryptedAccount();
   await post(accountPath+'/check');assert.equal((await state()).orderAccounts[0].status,'saved');assert.equal(createdOrders,4);assert.equal(loginRequests,1);assert.ok(affiliateVisits>=4);
   const pendingConfig=await post('/api/order-tasks',{label:'余额不足保留账单',url:sourceBase+'/product',product:'',quantity:1,maxTotal:20,executionMode:'pay',monitorId:monitor.id});
   await page.reload();await openMonitor();await generate();await enable();accountBalance=0;const paymentsBeforePending=paymentRequests;await run();current=await state();task=current.orderTasks[0];
@@ -266,7 +292,7 @@ try{
   await newConfig();await fillForm('自动识别币种后变更会拦截');await generate();await enable();productCurrency='EUR';await run();current=await state();assert.match(current.orderTasks[0].error,/币种/);assert.equal(createdOrders,5);productCurrency='USD';
   await newConfig();await fillForm('无法核实余额保留账单',20,'pay');await generate();await enable();accountBalance=100;hideBalance=true;await run();current=await state();task=current.orderTasks[0];
   assert.equal(task.status,'awaiting_payment',task.error||JSON.stringify(task.result));assert.equal(task.result.paymentPending.reason,'balance_unverified');assert.equal(task.result.invoiceId,'6');assert.equal(paymentRequests,paymentsBeforePending);assert.equal(createdOrders,6);hideBalance=false;
-  const otherProduct=await browser.newContext();await otherProduct.request.post(base+'/api/auth/register',{data:{username:'product-other',password:'product-other-password-123'}});assert.equal((await otherProduct.request.post(base+'/api/monitors/'+monitor.id+'/order-product/preview',{data:{url:sourceBase+'/product'}})).status(),404);await otherProduct.close();
+  const otherProduct=await browser.newContext({ignoreHTTPSErrors:true});await otherProduct.request.post(base+'/api/auth/register',{data:{username:'product-other',password:'product-other-password-123'}});assert.equal((await otherProduct.request.post(base+'/api/monitors/'+monitor.id+'/order-product/preview',{data:{url:sourceBase+'/product'}})).status(),404);await otherProduct.close();
   await page.screenshot({path:path.join(output,'desktop-balance-pending.png'),fullPage:true});await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);await page.screenshot({path:path.join(output,'mobile-balance-pending.png'),fullPage:true});
   await newConfig();await fillForm('禁止改用银行卡付款',20,'pay');await generate();await enable();foreignGateway=true;await run();current=await state();assert.equal(current.orderTasks[0].status,'awaiting_payment');assert.equal(createdOrders,7);assert.equal(paymentRequests,paymentsBeforePending);foreignGateway=false;
   await newConfig();await fillForm('自动识别 EUR 并用余额支付',20,'pay');await page.locator('#order-product').fill('');productCurrency='EUR';invoiceCurrency='EUR';await generate();current=await state();assert.equal(current.orderTasks[0].verifiedCurrency,'EUR');await enable();await run();current=await state();assert.equal(current.orderTasks[0].status,'paid',JSON.stringify(current.orderTasks[0].result));assert.equal(current.orderTasks[0].result.payment.currency,'EUR');assert.equal(createdOrders,8);assert.equal(paymentRequests,paymentsBeforePending+1);productCurrency='USD';invoiceCurrency='USD';
@@ -314,5 +340,5 @@ try{
   assert.deepEqual(errors,[]);console.log('PASS integrated monitor ordering, private interactive prelogin with 2FA and restart, real AFF Cookie on order request, AI-generated DOM repair before submission, actual scoped payment, budget/invoice/AFF/login protections, cancellation, tenant isolation, mobile layout');
 }catch(error){if(page)console.error('Order smoke UI state:',await page.locator('#order-status,#order-account-status,#toast').allTextContents());throw error;}finally{
   await browser?.close();if(child){child.kill();await new Promise(r=>child.exitCode!==null?r():child.once('exit',r));}
-  mock.closeAllConnections?.();cashier.closeAllConnections?.();await Promise.all([new Promise(r=>mock.close(r)),new Promise(r=>cashier.close(r))]);const resolved=path.resolve(dataDir);assert.ok(resolved.startsWith(path.resolve(tmpdir())+path.sep)&&path.basename(resolved).startsWith('radar-orders-ui-'));await fs.rm(resolved,{recursive:true,force:true,maxRetries:5,retryDelay:100});
+  tlsProxy.closeAllConnections();await new Promise(r=>tlsProxy.close(r));mock.closeAllConnections?.();cashier.closeAllConnections?.();await Promise.all([new Promise(r=>mock.close(r)),new Promise(r=>cashier.close(r))]);const resolved=path.resolve(dataDir);assert.ok(resolved.startsWith(dataRoot+path.sep)&&path.basename(resolved).startsWith('radar-orders-ui-'));await fs.rm(resolved,{recursive:true,force:true,maxRetries:5,retryDelay:100});
 }

@@ -25,10 +25,32 @@ services:
       DATA_DIR: /app/.data
       SIGNUP_CODE: ${SIGNUP_CODE:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-0}
+      CREDENTIALS_KEY: ${CREDENTIALS_KEY:-}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      FLARESOLVERR_ENABLED: ${FLARESOLVERR_ENABLED:-0}
+      FLARESOLVERR_URL: ${FLARESOLVERR_URL:-http://flaresolverr:8191/v1}
+      FLARESOLVERR_TIMEOUT_MS: ${FLARESOLVERR_TIMEOUT_MS:-60000}
+      FLARESOLVERR_SESSION_TTL: ${FLARESOLVERR_SESSION_TTL:-15}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       MAIL_FROM: ${MAIL_FROM:-}
     volumes:
       - "${RADAR_DATA_VOLUME:-radar_data}:/app/.data"
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    restart: unless-stopped
+    profiles: ["flaresolverr"]
+    environment:
+      LOG_LEVEL: warning
+      LOG_HTML: "false"
+    expose:
+      - "8191"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8191/health', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 8
+      start_period: 120s
 
 volumes:
   radar_data:

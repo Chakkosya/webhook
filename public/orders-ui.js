@@ -95,8 +95,11 @@ function renderOrderAccountStatus(force=false){
 }
 function replaceOrderAccount(account){if(!account)return;appState.orderAccounts=(appState.orderAccounts||[]).filter(a=>a.monitorId!==account.monitorId);appState.orderAccounts.push(account);if(account.monitorId===orderMonitorId)renderOrderAccountStatus(true);}
 function lockOrderAccountControls(){const operation=orderAccountOperation;if(!operation)return;document.querySelectorAll('#order-addon button,#order-addon .order-account-area input').forEach(el=>{if(!operation.controls.has(el))operation.controls.set(el,el.disabled);el.disabled=true;});}
+function credentialHttpsAvailable(){return window.location?.protocol==='https:';}
 function renderLoginView(data){
-  const target=$('#order-login-window');if(!target)return;orderLoginSession=data;
+  const target=$('#order-login-window');if(!target)return;
+  if(!credentialHttpsAvailable()){target.textContent='网站凭证录入必须通过 HTTPS 访问本应用';return;}
+  orderLoginSession=data;
   const view=data.view,keys=view.fields.map(f=>f.key).join(',');
   if(target.dataset.keys!==keys||!$('#order-login-image')){
     target.dataset.keys=keys;target.innerHTML='<p class="field-help">在下方输入网站登录信息，再点击网页中的登录按钮。验证和二次认证在此完成。</p><div class="rule-fields order-login-fields">'+view.fields.map(f=>f.type==='checkbox'?'<label class="order-check"><input type="checkbox" data-login-field="'+f.key+'" data-login-type="check">'+escapeHtml(f.label)+'</label>':orderField(escapeHtml(f.label),'login-'+f.key,'',f.type,'data-login-field="'+f.key+'" autocomplete="off"')).join('')+'</div><p id="order-login-address" class="field-help"></p><img id="order-login-image" alt="网站登录页面，点击图片中的按钮进行操作" draggable="false"><div class="order-account-actions"><button type="button" class="mini-button" data-login-action="scroll-up">向上滚动</button><button type="button" class="mini-button" data-login-action="scroll-down">向下滚动</button><button type="button" class="mini-button" data-login-action="refresh">刷新网页</button><button type="button" class="mini-button" data-order-account-action="cancel">关闭登录</button><button type="button" class="button button-primary" data-order-account-action="finish">保存登录会话</button></div>';
@@ -106,6 +109,7 @@ function renderLoginView(data){
   if(!orderAccountOperation&&view.loginStatus==='authenticated')$('#order-account-status').textContent='网站已登录，点击保存登录会话';
 }
 function queueLoginAction(input){
+  if(!credentialHttpsAvailable()){const status=$('#order-account-status');if(status)status.textContent='网站凭证录入必须通过 HTTPS 访问本应用';return Promise.resolve();}
   const session=orderLoginSession,epoch=orderEditorEpoch,workspace=workspaceEpoch,monitor=orderMonitorId;if(!session||orderAccountOperation)return Promise.resolve();
   orderLoginQueue=orderLoginQueue.catch(()=>{}).then(async()=>{if(epoch!==orderEditorEpoch||workspace!==workspaceEpoch)return;const controller=new AbortController();orderLoginRequests.add(controller);try{const data=await api('/api/monitors/'+encodeURIComponent(monitor)+'/order-account/action','POST',{sessionId:session.sessionId,...input},{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(30000)])});if(epoch===orderEditorEpoch&&workspace===workspaceEpoch)renderLoginView(data);}finally{orderLoginRequests.delete(controller);}});
   return orderLoginQueue.catch(error=>{if(epoch===orderEditorEpoch)$('#order-account-status').textContent=error.message;});
@@ -126,6 +130,7 @@ document.addEventListener('click',async event=>{
   if(button.hasAttribute('data-order-mode')){root.querySelectorAll('[data-order-mode]').forEach(b=>b.setAttribute('aria-checked',String(b===button)));return;}
   if(button.dataset.orderAccountAction){
     const action=button.dataset.orderAccountAction,epoch=orderEditorEpoch,workspace=workspaceEpoch,monitor=orderMonitorId,path='/api/monitors/'+encodeURIComponent(monitor)+'/order-account';
+    if(['start','finish'].includes(action)&&!credentialHttpsAvailable()){$('#order-account-status').textContent='网站凭证录入必须通过 HTTPS 访问本应用';return;}
     const operation={epoch,workspace,controls:new Map(),controller:new AbortController()};
     orderAccountOperation=operation;lockOrderAccountControls();
     const active=()=>epoch===orderEditorEpoch&&workspace===workspaceEpoch;
