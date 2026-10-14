@@ -20,12 +20,14 @@ test('write verification refreshes expired observations without replaying reques
     const url=new URL(req.url,'http://localhost');let body='';for await(const chunk of req)body+=chunk;
     requests.push({path:url.pathname,method:req.method,body});
     res.setHeader('content-type','text/html; charset=utf-8');
-    if(url.pathname==='/basket'||url.pathname==='/checkout')return res.end('<main>'+(url.searchParams.get('pay')==='ajax'?checkoutPage.replace('action="/create"','action="/create?pay=ajax"'):checkoutPage)+'</main>');
+    if(url.pathname==='/basket'||url.pathname==='/checkout')return res.end('<main>'+(url.searchParams.has('pay')?checkoutPage.replace('action="/create"','action="/create?pay='+encodeURIComponent(url.searchParams.get('pay'))+'"'):checkoutPage)+'</main>');
     if(url.pathname==='/create'){
-      const script=url.searchParams.get('pay')!=='ajax'?'':'<script>document.querySelector("form").onsubmit=async event=>{event.preventDefault();const response=await fetch("/pay",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams(new FormData(event.target))});await response.text();document.querySelector("#pending").textContent="Scan QR code to complete payment";};</script>';
-      return res.end('<main>'+invoicePage+'</main>'+script);
+      const mode=url.searchParams.get('pay'),replace=mode==='replace-paid'||mode==='replace-pending';
+      const update=replace?'document.body.innerHTML=await response.text();':'await response.text();document.querySelector("#pending").textContent="Scan QR code to complete payment";';
+      const script=mode!=='ajax'&&!replace?'':'<script>document.querySelector("form").onsubmit=async event=>{event.preventDefault();const response=await fetch(event.target.action,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams(new FormData(event.target))});'+update+'};</script>';
+      return res.end('<main>'+(mode==='replace-pending'?invoicePage.replace('action="/pay"','action="/pay?pending=1"'):invoicePage)+'</main>'+script);
     }
-    if(url.pathname==='/pay')return res.end('<main><h1 id="paid">Payment successful: write-42 Paid</h1></main>');
+    if(url.pathname==='/pay')return res.end(url.searchParams.has('pending')?'<main><p id="pending">Scan QR code to complete payment</p></main>':'<main><h1 id="paid">Payment successful: write-42 Paid</h1></main>');
     const mode=url.searchParams.get('mode')||'native';
     const replacement=mode==='replace'?'document.body.innerHTML=await response.text();':'await response.text();';
     const script=mode==='native'?'':'<script>document.querySelector("form").onsubmit=async event=>{event.preventDefault();const response=await fetch("/basket",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams(new FormData(event.target))});'+replacement+'};</script>';
@@ -181,8 +183,8 @@ test('write verification refreshes expired observations without replaying reques
       }finally{await session.browser.close();}
     });
     for(const semantic of [false,true])await t.test((semantic?'semantic':'selector')+' order and payment confirmation use fresh observations and one POST each',async()=>{
-      let submissions=0,payments=0;
-      const beforeOrders=posts('/create'),beforePayments=posts('/pay'),session=await open('/checkout',{onBeforeSubmit:async()=>submissions++,onBeforePayment:async()=>payments++});
+      let submissions=0,payments=0;const trace=[];
+      const beforeOrders=posts('/create'),beforePayments=posts('/pay'),session=await open('/checkout',{onBeforeSubmit:async()=>submissions++,onBeforePayment:async()=>payments++,onTrace:step=>trace.push(step)});
       try{
         const previous=await session.browser.methods.observe();
         const ordered=await session.browser.methods.submit({...checkout,semantic});
@@ -204,6 +206,10 @@ test('write verification refreshes expired observations without replaying reques
         assert.equal(posts('/pay'),beforePayments+1);
         assert.ok(session.observations.slice(beforeSnapshots).some(observation=>observation.url===base+'/pay'));
         assert.match(paid.confirmation,/Payment successful/);
+        if(semantic){
+          assert.equal(await session.page.locator('[data-order-payment-pending]').count(),0);
+          assert.ok(trace.some(step=>step.action==='付款状态核验'&&/pending 标记因页面重渲染或跳转丢失，未能判断扫码状态/.test(step.detail)));
+        }
       }finally{await session.browser.close();}
     });
     await t.test('semantic payment retains a pending node across a stale-read refresh without replaying',async()=>{
@@ -228,6 +234,32 @@ test('write verification refreshes expired observations without replaying reques
         assert.equal(staleReads,1);
         assert.equal(session.observations.length,beforeSnapshots+1);
         assert.match(session.observations.at(-1).text,/Scan QR code to complete payment/);
+        assert.equal(posts('/create'),beforeOrders+1);
+        assert.equal(posts('/pay'),beforePayments+1);
+      }finally{await session.browser.close();}
+    });
+    for(const mode of ['replace-paid','replace-pending'])await t.test('semantic payment reports a lost pending marker after '+mode+' without replaying',async()=>{
+      const trace=[],beforeOrders=posts('/create'),beforePayments=posts('/pay'),session=await open('/checkout?pay='+mode,{onTrace:step=>trace.push(step)});
+      try{
+        await session.browser.methods.observe();
+        assert.equal((await session.browser.methods.submit({...checkout,semantic:true})).status,'ordered');
+        const prepay=session.observations.at(-1),pending=prepay.elements.find(element=>element.id==='pending');
+        assert.ok(pending);
+        const pendingSelector='[data-agent-ref='+JSON.stringify(prepay.observationId+':'+pending.ref)+']';
+        if(mode==='replace-paid'){
+          const result=await session.browser.methods.pay({...payment,semantic:true,pendingSelector});
+          assert.equal(result.status,'paid');
+          assert.match(result.confirmation,/Payment successful/);
+        }else{
+          await assert.rejects(session.browser.methods.pay({...payment,semantic:true,pendingSelector}),{code:'ORDER_CONFIRMATION_UNVERIFIED'});
+          assert.match(await session.page.locator('#pending').innerText(),/Scan QR code/);
+        }
+        assert.equal(session.page.url(),base+'/create?pay='+mode);
+        assert.equal(await session.page.locator('[data-order-payment-pending]').count(),0);
+        const lost=trace.filter(step=>step.action==='付款状态核验');
+        assert.equal(lost.length,1);
+        assert.match(lost[0].detail,/pending 标记因页面重渲染或跳转丢失，未能判断扫码状态/);
+        assert.match(lost[0].detail,/请在网站收银台确认是否需要扫码或验证/);
         assert.equal(posts('/create'),beforeOrders+1);
         assert.equal(posts('/pay'),beforePayments+1);
       }finally{await session.browser.close();}

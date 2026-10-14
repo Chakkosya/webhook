@@ -6,7 +6,7 @@ import {requestOrderAI,readOrderTimeouts,getOrderTimeouts,DEFAULT_ORDER_TIMEOUTS
 test('普通与补货使用独立预算，补货环境参数沿用上限',()=>{
  const normal=getOrderTimeouts('manual',{}),restock=getOrderTimeouts('restock',{});
  assert.equal(normal.aiTimeoutMs,120000);assert.equal(normal.agentTimeoutMs,600000);assert.equal(normal.aiRetries,1);assert.equal(normal.probeTimeoutMs,3000);
- assert.equal(normal.couponVerificationTimeoutMs,12000);assert.equal(normal.loginVerificationTimeoutMs,12000);
+ assert.equal(normal.couponVerificationTimeoutMs,12000);assert.equal(normal.loginVerificationTimeoutMs,12000);assert.equal(normal.submitResponseTimeoutMs,60000);assert.equal(normal.redirectTimeoutMs,60000);
  assert.equal(restock.aiTimeoutMs,180000);assert.equal(restock.agentTimeoutMs,1800000);assert.equal(restock.aiRetries,2);assert.equal(restock.probeTimeoutMs,10000);
  assert.equal(restock.couponVerificationTimeoutMs,30000);assert.equal(restock.loginVerificationTimeoutMs,30000);assert.equal(restock.pageTimeoutMs,60000);assert.equal(restock.navigationTimeoutMs,120000);assert.equal(restock.submitRequestTimeoutMs,20000);assert.equal(restock.submitResponseTimeoutMs,120000);assert.equal(restock.redirectTimeoutMs,120000);
  assert.equal(getOrderTimeouts('restock',{ORDER_RESTOCK_AI_TIMEOUT_MS:'300001'}).aiTimeoutMs,180000);assert.equal(getOrderTimeouts('restock',{ORDER_RESTOCK_AGENT_TIMEOUT_MS:'1800001'}).agentTimeoutMs,1800000);

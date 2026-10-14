@@ -180,8 +180,8 @@ async function rememberedStep(recipes,input,completed,onSatisfied){
   return distinct.length===1?distinct[0]:null;
 }
 export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEvent=()=>{},allowAssistance=true,onSatisfied=async()=>{}}={}){
-  let lastInput,lastStep,lastRecipe,identifiedProduct,lastFailure,pending=[];
-  const expandedPages=new Set(),failedPages=new Map(),metadata=new WeakMap(),completed=new Set(),completedClicks=[];
+  let lastInput,lastStep,lastRecipe,identifiedProduct,pending=[];
+  const expandedPages=new Set(),formatFailures=new Map(),bindingFailures=new Map(),metadata=new WeakMap(),completed=new Set(),completedClicks=[];
   const rememberRecipe=recipe=>{if(recipe.currentOnly)return;const key=recipeKey(recipe);completed.add(key);if(!recipes.some(item=>recipeKey(item)===key)){recipes.push(recipe);onRemember(recipes);}};
   const invalidate=recipe=>{
     if(!recipe)return;
@@ -226,13 +226,22 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
       if(!allowAssistance)throw bindingFailure();
       source='ai_assistance';group=randomUUID();
       const key=scopeKey(input);
-      if((failedPages.get(key)||0)>=2)throw bindingFailure(lastFailure);
+      const exhausted=[formatFailures.get(key),bindingFailures.get(key)].find(failure=>failure?.count>=2);
+      if(exhausted){
+        const last=exhausted.error,slot=last.slot||'step';
+        throw bindingFailure(Object.assign(agentError(last.code,'当前页面恢复预算已耗尽；最后失败 '+last.code+'，slot='+slot+'：'+last.message),last,{slot}));
+      }
       let result;
       try{
         const current=recipes.filter(item=>item.version===2&&scopeIdentity(item.scope)===key);
         const knownSteps=[...new Map(current.map(item=>{const state={stage:item.stage,action:item.template.action,completed:completed.has(recipeKey(item)),needsBinding:!completed.has(recipeKey(item))&&!restore(item,input)};return [JSON.stringify(state),state];})).values()];
         const focusRefs=current.flatMap(item=>{const restored=restore(item,input);if(!restored)return [];const refs=[];transformTargets(restored,target=>{refs.push(target.ref);return target;});return refs;});
-        const observation=planningObservation(input.observation,{...input,focusRefs,expanded:expandedPages.has(key)});
+        let observation=planningObservation(input.observation,{...input,focusRefs,expanded:expandedPages.has(key)});
+        const product=productContext(input.observation,input.order);
+        if(product?.binding&&!expandedPages.has(key)&&!observation.elements.some(el=>el.ref===product.binding.ref)){
+          expandedPages.add(key);
+          observation=planningObservation(input.observation,{...input,focusRefs,expanded:true});
+        }
         result=await assist({...input,flow:{...flowContext(input),knownSteps},observation});
         const first=result.steps?.[0]||result;
         if(first.action==='stop'&&!observation.coverage.complete&&!expandedPages.has(key)&&!/out\s+of\s+stock|sold\s+out|captcha|缺货|售罄|验证码|二次验证/i.test(first.reason||'')){
@@ -243,11 +252,11 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
         const steps=(result.steps||[result]).map(value=>{
           const validated=resolveValueSource(bindKnownProduct(validateStep(value),input.observation,input.order),input);
           transformTargets(validated,(target,slot)=>{
-            if(!observedRefs.has(target.ref))throw agentError('AGENT_ELEMENT_MISSING','动作引用了未提供的元素，请扩大当前商品区域并重新绑定当前 ref。');
+            if(!observedRefs.has(target.ref))throw Object.assign(agentError('AGENT_ELEMENT_MISSING','动作引用了未提供的元素，请扩大当前商品区域并重新绑定当前 ref。'),{slot});
             const displayed=observation.elements.find(el=>el.ref===target.ref);
             if(displayed.omittedMatchingControls){
               const actual=input.observation.elements.find(el=>el.ref===target.ref),descriptor=describe(actual,slot,input.observation);
-              if(!descriptor||locate(descriptor,input.observation)?.ref!==target.ref)throw agentError('AGENT_ELEMENT_MISSING','页面存在同名控件，请结合已给出的商品与区域证据重新定位。');
+              if(!descriptor||locate(descriptor,input.observation)?.ref!==target.ref)throw Object.assign(agentError('AGENT_ELEMENT_MISSING','页面存在同名控件，请结合已给出的商品与区域证据重新定位。'),{slot});
             }
             return target;
           });
@@ -268,8 +277,12 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
         }
         step=steps[nextIndex];recipe=compiledSteps[nextIndex];pending=compiledSteps.slice(nextIndex+1);
       }catch(error){
-        lastFailure=error;
-        if(['AGENT_LOW_CONFIDENCE','AGENT_PLAN_INVALID','AGENT_STEP_UNVERIFIED'].includes(error.code))failedPages.set(key,(failedPages.get(key)||0)+1);
+        if(['AGENT_LOW_CONFIDENCE','AGENT_PLAN_INVALID'].includes(error.code)){
+          const previous=formatFailures.get(key),slot=error.slot||'step';
+          formatFailures.set(key,{slot,count:previous?.slot===slot?previous.count+1:1,error});
+        }else if(['AGENT_ELEMENT_MISSING','AGENT_STEP_UNVERIFIED','AGENT_CONFIGURATION_UNVERIFIED'].includes(error.code)){
+          bindingFailures.set(key,{count:(bindingFailures.get(key)?.count||0)+1,error});
+        }
         error.rejectedPlan??=result;
         if(error.code==='AGENT_ELEMENT_MISSING')expandedPages.add(key);
         throw error;
@@ -285,7 +298,7 @@ export function createAssistedPlanner(assist,{recipes=[],onRemember=()=>{},onEve
     if(!step||!input)return;
     const meta=metadata.get(step),group=meta?.group||randomUUID();
     const recipe=meta?.recipe||compile(step,input,{group});
-    failedPages.delete(scopeKey(input));
+    formatFailures.delete(scopeKey(input));bindingFailures.delete(scopeKey(input));
     if(!recipe||recipe.currentOnly||['stop','wait','pay','invoice'].includes(step.action))return;
     const key=recipeKey(recipe);completed.add(key);
     if(step.action==='click'&&recipe.template.target&&!completedClicks.some(item=>recipeKey(item)===key))completedClicks.push(recipe);

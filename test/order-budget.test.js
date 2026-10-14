@@ -106,3 +106,24 @@ test('submission-only planning excludes payment selection even when a merchant d
   for(const executionMode of ['prepare','submit']){const input={order:{executionMode},context:{}};assert.ok(!flowContext(input).allowedActions.includes('choosePayment'));assert.throws(()=>assertFlowStep({action:'choosePayment'},input),{code:'AGENT_STEP_UNVERIFIED'});}
   assert.ok(flowContext({order:{executionMode:'pay'}}).allowedActions.includes('choosePayment'));
 });
+
+test('budget reductions keep the largest affordable discounted quantity and stop at the total limit',async()=>{
+  const quotes={1:12,2:20,3:25,4:46,5:70},f=fixture({quantity:5,maxTotal:25,price:q=>quotes[q]});await f.execute();
+  assert.deepEqual(f.attempts.map(attempt=>attempt.quantity),[5,4,3]);assert.deepEqual(f.orders.map(order=>order.quantity),[3]);
+  assert.equal(f.task.status,'partial');assert.deepEqual([f.task.result.purchaseSummary.quantity,f.task.result.purchaseSummary.total,f.task.result.purchaseSummary.remainingQuantity],[3,25,2]);
+  assert.match(f.task.result.purchaseSummary.reason,/累计费用已达到预算上限/);assert.equal(f.task.quantity,5);assert.equal(f.task.maxTotal,25);
+});
+
+test('a limited order that exhausts the cumulative budget starts no further pricing attempt',async()=>{
+  const f=fixture({quantity:5,maxTotal:25,limit:2,price:q=>q*10+5});await f.execute();
+  assert.deepEqual(f.attempts.map(attempt=>[attempt.quantity,attempt.budget]),[[5,25],[2,25]]);assert.deepEqual(f.orders.map(order=>order.quantity),[2]);
+  assert.equal(f.task.status,'partial');assert.equal(f.task.purchases.length,1);assert.equal(f.task.result.purchaseSummary.total,25);assert.equal(f.task.result.purchaseSummary.remainingQuantity,3);
+});
+
+test('an unknown submission after budget reduction stops without replaying or buying the remainder',async()=>{
+  const f=fixture({quantity:4,maxTotal:25,price:q=>q*10+2,unknownAt:1});await f.execute();
+  assert.deepEqual(f.attempts.map(attempt=>attempt.quantity),[4,3,2]);assert.deepEqual(f.orders.map(order=>order.quantity),[2]);
+  assert.equal(f.task.status,'uncertain');assert.equal(f.task.purchases.length,1);assert.equal(f.task.purchases[0].review.total,22);assert.equal(f.task.result.purchaseSummary.quantity,0);
+  await f.service.trigger(f.user,f.user.monitors[0]);f.service.recover([f.user]);await assert.rejects(f.service.execute(f.user,f.task),/已经执行/);
+  assert.equal(f.attempts.length,3);assert.equal(f.orders.length,1);
+});
