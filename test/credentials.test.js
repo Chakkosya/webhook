@@ -37,21 +37,39 @@ test('legacy credentials and full session migrate to ciphertext and round trip w
   assert.ok(!publicText.includes('fixture-')); assert.ok(!publicText.includes('aes-256-gcm'));
 });
 
-test('missing key cannot persist new credentials or migrate plaintext and wrong key cannot overwrite encrypted data', t => {
+test('automatic key migrates plaintext and survives restart; missing or wrong keys preserve encrypted data', t => {
   const { dir, file } = fixture(t);
   process.env.CREDENTIALS_KEY = '';
-  const store = createStore(dir), original = fs.readFileSync(file, 'utf8');
-  store.state.users.push(legacyUser());
-  assert.throws(() => store.persist(), /CREDENTIALS_KEY/);
-  assert.equal(fs.readFileSync(file, 'utf8'), original); assert.equal(fs.existsSync(file + '.tmp'), false);
   const legacy = JSON.stringify({ users: [legacyUser()] }); fs.writeFileSync(file, legacy);
-  assert.throws(() => createStore(dir), /CREDENTIALS_KEY/); assert.equal(fs.readFileSync(file, 'utf8'), legacy);
+  const store = createStore(dir), keyFile = path.join(dir, 'credentials.key');
+  const generated = fs.readFileSync(keyFile, 'utf8').trim();
+  assert.match(generated, /^[a-f0-9]{64}$/);
+  assert.deepEqual(store.state.users[0].orderAccounts, legacyUser().orderAccounts);
+  assert.deepEqual(createStore(dir).state.users[0].orderAccounts, legacyUser().orderAccounts);
+  assert.equal(fs.readFileSync(keyFile, 'utf8').trim(), generated);
+  const migrated = fs.readFileSync(file, 'utf8');
+  assert.ok(!migrated.includes('fixture-password-secret'));
+  fs.unlinkSync(keyFile);
+  assert.throws(() => createStore(dir), /缺少密钥/);
+  assert.equal(fs.existsSync(keyFile), false);assert.equal(fs.readFileSync(file, 'utf8'), migrated);
+  fs.writeFileSync(file, legacy);
   const previous = process.env.CREDENTIALS_KEY;
   t.after(() => { if (previous === undefined) delete process.env.CREDENTIALS_KEY; else process.env.CREDENTIALS_KEY = previous; });
   process.env.CREDENTIALS_KEY = key; createStore(dir); const encrypted = fs.readFileSync(file, 'utf8');
   for (const value of ['', 'cd'.repeat(32)]) {
     process.env.CREDENTIALS_KEY = value; assert.throws(() => createStore(dir), /CREDENTIALS_KEY/); assert.equal(fs.readFileSync(file, 'utf8'), encrypted);
   }
+});
+
+test('invalid key files preserve data and explicit environment keys take precedence', t => {
+  const {dir,file}=fixture(t);const store=createStore(dir);store.state.users.push(legacyUser());store.persist();
+  const original=fs.readFileSync(file,'utf8'),keyFile=path.join(dir,'credentials.key');
+  assert.equal(fs.existsSync(keyFile),false);
+  fs.writeFileSync(keyFile,'');process.env.CREDENTIALS_KEY='';
+  assert.throws(()=>createStore(dir),/credentials.key/);assert.equal(fs.readFileSync(file,'utf8'),original);
+  fs.writeFileSync(keyFile,'cd'.repeat(32));process.env.CREDENTIALS_KEY=key;
+  assert.deepEqual(createStore(dir).state.users[0].orderAccounts,legacyUser().orderAccounts);
+  assert.equal(fs.readFileSync(keyFile,'utf8'),'cd'.repeat(32));
 });
 
 test('authenticated encryption rejects altered ciphertext and swapped account context', () => {
@@ -73,14 +91,15 @@ test('credential transport requires TLS or explicitly trusted HTTPS proxy, never
   request.socket.encrypted = true; requireCredentialHttps(request, {});
 });
 
-test('account password submission rejects HTTP merchant URL and rolls back when encryption key is missing', t => {
+test('account password submission rejects HTTP merchant URL and uses the automatic key for HTTPS', t => {
   const { dir } = fixture(t); process.env.CREDENTIALS_KEY = '';
   const store = createStore(dir), user = { id: 'user', orderAccounts: [] }, monitor = { id: 'monitor' };
   store.state.users.push(user); store.persist();
   const service = createOrderAccountService({ persist: store.persist });
   assert.throws(() => service.save(user, monitor, { loginUrl: 'http://shop.example/login', password: 'fixture-secret' }), /HTTPS/);
-  assert.throws(() => service.save(user, monitor, { loginUrl: 'https://shop.example/login', password: 'fixture-secret' }), /CREDENTIALS_KEY/);
-  assert.deepEqual(user.orderAccounts, []);
+  service.save(user, monitor, { loginUrl: 'https://shop.example/login', password: 'fixture-secret' });
+  assert.equal(user.orderAccounts.length, 1);
+  assert.ok(!fs.readFileSync(path.join(dir, 'state.json'), 'utf8').includes('fixture-secret'));
 });
 
 test('HTTP UI neither renders credential fields nor sends remote login input', async () => {

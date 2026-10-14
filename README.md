@@ -10,7 +10,9 @@ FlareSolverr 是可选侧车，默认关闭。它用独立浏览器处理验证�
 
 账户凭证录入和远程登录必须通过 HTTPS，HTTP（包括 localhost）会被拒绝。在可信 HTTPS 反向代理后部署时，设置 `TRUST_PROXY=1`、`COOKIE_SECURE=1`；反向代理必须覆盖 `X-Forwarded-Proto` 为实际协议，后端只绑定回环地址或受控内网，不允许绕过代理直连。`COOKIE_SECURE` 本身不会提供 HTTPS。
 
-设置 `CREDENTIALS_KEY` 为 32 字节随机密钥的 64 位十六进制形式，可用 `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` 生成。密钥应独立备份，不提交到仓库。账户密码和会话存储加密后写入 `.data/`，已有明文数据在配置密钥后迁移；缺少密钥时拒绝写入敏感数据，错误密钥不会覆盖原数据。丢失密钥后无法恢复已有凭证。旧备份中的明文需要单独清理。
+账户密码和会话存储加密后写入数据目录。未设置 `CREDENTIALS_KEY` 时，首次启动自动生成密钥并保存为数据目录中的 `credentials.key`，后续启动复用；已有明文凭证自动迁移，无需为升级手动添加环境变量。保留原数据卷，备份须包含 `credentials.key`。密钥与数据在同一目录，整目录泄露时这层加密不能提供保护。
+
+也可通过 `CREDENTIALS_KEY` 指定 64 位十六进制密钥，该值优先于密钥文件；显式密钥不复制到数据目录，须独立备份。已有加密数据缺少密钥、密钥文件损坏或密钥错误时停止启动，不覆盖数据。不要更换正在使用的密钥；丢失后无法恢复已有凭证。旧备份中的明文需要单独清理。
 
 ### 启用 FlareSolverr
 
@@ -111,7 +113,7 @@ node server.js
 | `DATA_DIR` | 数据目录，默认项目内 `.data` |
 | `SIGNUP_CODE` | 设置后，新用户注册必须填写此邀请码 |
 | `COOKIE_SECURE=1` | 经 HTTPS 访问时，为登录 Cookie 加上 Secure 标志 |
-| `CREDENTIALS_KEY` | 64 位十六进制凭证加密密钥；保存账户密码或会话前必须配置 |
+| `CREDENTIALS_KEY` | 可选的 64 位十六进制凭证加密密钥；留空时自动生成并持久化至数据目录的 `credentials.key` |
 | `TRUST_PROXY=1` | 仅在可信 HTTPS 反向代理后启用，接受代理覆盖的协议标头 |
 | `FLARESOLVERR_ENABLED` | 默认 `0`；设为 `1` 启用侧车解验证 |
 | `FLARESOLVERR_URL` | 默认 `http://flaresolverr:8191/v1`，仅使用受信内网服务 |
