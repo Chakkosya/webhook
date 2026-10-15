@@ -48,3 +48,16 @@ test('注册落盘失败不占用用户名，存储恢复后可以使用同一�
  const f=fixture(t);f.block();assert.throws(()=>f.store.register('retry-user','original-password-123',process.env.SIGNUP_CODE),error=>error.code==='EISDIR');assert.equal(f.store.state.users.length,0);
  f.unblock();const {user}=f.store.register('retry-user','original-password-123',process.env.SIGNUP_CODE);assert.equal(createStore(f.dir).verifyLogin('retry-user','original-password-123').id,user.id);
 });
+
+test('旧 AI Key 自动保留，多 Key 及当前选择在重启后保持且不回显',t=>{
+ const {dir,store}=fixture(t),{user}=store.register('ai-key-user','original-password-123',process.env.SIGNUP_CODE);
+ delete user.settings.aiKeys;delete user.settings.activeAiKeyId;user.settings.aiKey='legacy-private-key';store.persist();
+ const legacy=createStore(dir),restored=legacy.state.users[0];
+ assert.equal(restored.settings.aiKeys.length,1);assert.equal(restored.settings.aiKeys[0].key,'legacy-private-key');
+ assert.equal(restored.settings.activeAiKeyId,restored.settings.aiKeys[0].id);assert.equal(restored.settings.aiKey,'legacy-private-key');
+ restored.settings.aiKeys.push({id:'second',name:'备用',key:'second-private-key'});restored.settings.activeAiKeyId='second';restored.settings.aiKey='second-private-key';legacy.persist();
+ const reloaded=createStore(dir),selected=reloaded.state.users[0];
+ assert.deepEqual(selected.settings.aiKeys,restored.settings.aiKeys);assert.equal(selected.settings.activeAiKeyId,'second');assert.equal(selected.settings.aiKey,'second-private-key');
+ const view=reloaded.publicWorkspace(selected);assert.equal(view.settings.aiKeys.length,2);assert.equal(view.settings.hasAiKey,true);
+ for(const secret of ['legacy-private-key','second-private-key'])assert.equal(JSON.stringify(view).includes(secret),false);
+});

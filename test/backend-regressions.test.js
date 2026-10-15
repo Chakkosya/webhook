@@ -169,3 +169,71 @@ test('AI 解析在清除或更换 Key 期间保持请求配置，响应和原始
   assert.match(question.questions[0], /已隐藏的 API Key/);
   assert.equal(JSON.stringify({ question, state: await request('/api/state') }).includes(replacementKey), false);
 });
+
+test('多 API Key 可命名、选择、单独测试和删除，AI 请求使用当前选中项', async t => {
+  const authorizations = [];
+  const { request, targetUrl } = await harness(t, async (req, res) => {
+    for await (const _ of req) {}
+    authorizations.push(req.headers.authorization);
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ status: 'answer', message: '可以创建定时提醒。' }) } }] }));
+  });
+  const firstKey = 'primary-private-api-key', secondKey = 'backup-private-api-key';
+  const saved = await request('/api/settings', 'PUT', {
+    aiBaseUrl: targetUrl + '/v1', aiModel: 'multi-key-model',
+    aiKeys: [{ id: 'primary', name: '常用', key: firstKey }, { id: 'backup', name: '备用', key: secondKey }],
+    activeAiKeyId: 'backup'
+  });
+  assert.equal(saved.settings.activeAiKeyId, 'backup');
+  assert.equal(saved.settings.hasAiKey, true);
+  assert.deepEqual(saved.settings.aiKeys, [{ id: 'primary', name: '常用', hasKey: true }, { id: 'backup', name: '备用', hasKey: true }]);
+  for (const key of [firstKey, secondKey]) assert.equal(JSON.stringify(saved).includes(key), false);
+
+  await request('/api/ai/test', 'POST', {});
+  await request('/api/ai/test', 'POST', { activeAiKeyId: 'primary' });
+  await request('/api/ai/test', 'POST', { activeAiKeyId: 'unsaved', aiKey: 'draft-private-key' });
+  assert.equal((await request('/api/state')).settings.activeAiKeyId, 'backup');
+  assert.equal((await request('/api/parse', 'POST', { instruction: '定时提醒能做什么？' })).status, 'answer');
+  assert.deepEqual(authorizations, ['Bearer ' + secondKey, 'Bearer ' + firstKey, 'Bearer draft-private-key', 'Bearer ' + secondKey]);
+
+  const renamed = await request('/api/settings', 'PUT', {
+    aiKeys: [{ id: 'primary', name: '日常', key: '' }, { id: 'backup', name: '备用' }], activeAiKeyId: 'primary'
+  });
+  assert.equal(renamed.settings.aiKeys[0].name, '日常');
+  await request('/api/settings', 'PUT', { webhooks: [] });
+  await request('/api/ai/test', 'POST', {});
+  assert.equal(authorizations.at(-1), 'Bearer ' + firstKey);
+
+  const removed = await request('/api/ai/key', 'DELETE');
+  assert.deepEqual(removed.settings.aiKeys, [{ id: 'backup', name: '备用', hasKey: true }]);
+  assert.equal(removed.settings.activeAiKeyId, 'backup');
+  await request('/api/ai/test', 'POST', {});
+  assert.equal(authorizations.at(-1), 'Bearer ' + secondKey);
+  const empty = await request('/api/settings', 'PUT', { aiKeys: [], activeAiKeyId: '' });
+  assert.deepEqual(empty.settings.aiKeys, []);
+  assert.equal(empty.settings.hasAiKey, false);
+  await request('/api/ai/test', 'POST', {}, 400);
+  for (const key of [firstKey, secondKey, 'draft-private-key']) assert.equal(JSON.stringify(await request('/api/state')).includes(key), false);
+});
+
+test('无效的 Key 列表或选择不会改动已保存设置，Key 列表按账户独立', async t => {
+  const { request, targetUrl } = await harness(t);
+  const saved = await request('/api/settings', 'PUT', {
+    aiBaseUrl: targetUrl + '/v1', aiModel: 'saved-model',
+    aiKeys: [{ id: 'own', name: '我的 Key', key: 'account-private-key' }], activeAiKeyId: 'own'
+  });
+  for (const body of [
+    { aiKeys: [{ id: 'new', name: '未填写密钥' }] },
+    { aiKeys: [{ id: 'own', name: '重复一' }, { id: 'own', name: '重复二' }] },
+    { activeAiKeyId: 'missing' }
+  ]) {
+    await request('/api/settings', 'PUT', { ...body, aiModel: 'should-not-be-saved' }, 400);
+    assert.deepEqual((await request('/api/state')).settings, saved.settings);
+  }
+  await request('/api/auth/register', 'POST', { username: 'second-user', password: 'second-password-123' }, 201);
+  const second = await request('/api/state');
+  assert.deepEqual(second.settings.aiKeys, []);
+  assert.equal(second.settings.hasAiKey, false);
+  await request('/api/settings', 'PUT', { aiKeys: [{ id: 'own', name: '其他账户的 Key' }], activeAiKeyId: 'own' }, 400);
+  assert.equal((await request('/api/state')).settings.hasAiKey, false);
+});

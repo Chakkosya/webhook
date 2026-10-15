@@ -4,6 +4,7 @@ import {createEvidenceStore} from './automation/logs/evidence.js';
 import { configureRuntimeTemp } from './lib/runtime-temp.js';
 import { findProxyProfile, selectedProxyUrl, saveProxyProfile } from './lib/proxy-profiles.js';
 import { ExpiringMap } from './lib/expiring-map.js';
+import { aiKeysFromInput, removeActiveAiKey, selectedAiKey } from './lib/ai-keys.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -99,14 +100,23 @@ const orderService = createOrderService({
   isAccountBusy:(user,monitorId)=>orderAccountService?.busy(user,{id:monitorId})||false,
   persist: () => store.persist(), withProxy: withSourceProxy, sourceOptions,
   requestAI: async (user, messages, {signal,timeoutMs=120000,onMetadata=()=>{}} = {}) => {
-    if (!user.settings.aiKey || !user.settings.aiModel) throw new Error('请先填写 AI API Key 和模型名称');
-    const raw = await fetchText(aiEndpoint(user.settings.aiBaseUrl), {
-      method: 'POST', timeout: timeoutMs, maxBytes: 100000, signal,
-      onResponse:httpStatus=>onMetadata({httpStatus}),
-      headers: { authorization: 'Bearer ' + user.settings.aiKey, 'content-type': 'application/json' },
-      body: JSON.stringify({ model: user.settings.aiModel, messages })
-    });
-    try { const response=JSON.parse(raw);onMetadata({responseId:response.id,model:response.model,usage:response.usage,finishReason:response.choices?.[0]?.finish_reason,responseChars:raw.length});return JSON.parse(String(response.choices?.[0]?.message?.content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')); }
+    const { aiKey, aiModel, aiBaseUrl } = user.settings;
+    if (!aiKey || !aiModel) throw new Error('请先填写 AI API Key 和模型名称');
+    const secrets = [aiKey, encodeURIComponent(aiKey), JSON.stringify(aiKey).slice(1, -1)].sort((a, b) => b.length - a.length);
+    const redact = value => secrets.reduce((text, secret) => text.replaceAll(secret, '[已隐藏的 API Key]'), String(value));
+    let raw;
+    try {
+      raw = await fetchText(aiEndpoint(aiBaseUrl), {
+        method: 'POST', timeout: timeoutMs, maxBytes: 100000, signal,
+        onResponse:httpStatus=>onMetadata({httpStatus}),
+        headers: { authorization: 'Bearer ' + aiKey, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: aiModel, messages })
+      });
+    } catch (error) {
+      for (const field of ['message', 'stack', 'networkCause', 'responseBody']) if (typeof error[field] === 'string') error[field] = redact(error[field]);
+      throw error;
+    }
+    try { const response=JSON.parse(raw);onMetadata(redactData({responseId:response.id,model:response.model,usage:response.usage,finishReason:response.choices?.[0]?.finish_reason,responseChars:raw.length},redact));return redactData(JSON.parse(String(response.choices?.[0]?.message?.content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')),redact); }
     catch { throw new Error('AI 未返回有效的下单代码，请重新生成'); }
   },
   notify: async (user, task) => {
@@ -977,6 +987,7 @@ async function parseInstructionAttempt(user, instruction, sourceUrlInput, trace,
 }
 
 async function parseInstruction(user, instruction, sourceUrlInput, trace, conversationInput = [], timeZone = '', draftInput = null) {
+  user = { ...user, settings: { ...user.settings } };
   try { return await parseInstructionAttempt(user, instruction, sourceUrlInput, trace, conversationInput, '', timeZone, draftInput); }
   catch (error) {
     if (!error.repairable) throw error;
@@ -1183,7 +1194,7 @@ async function handler(request, response) {
 
       if (request.method === 'GET' && pathname === '/api/logs') return sendJson(response, 200, { logs: user.logs.slice(0, 300) });
       if (request.method === 'DELETE' && pathname === '/api/ai/key') {
-        user.settings.aiKey = '';
+        user.settings = { ...user.settings, ...removeActiveAiKey(user.settings) };
         persist();
         return sendJson(response, 200, publicState(user));
       }
@@ -1191,7 +1202,8 @@ async function handler(request, response) {
         const body = await readJson(request);
         const baseUrl = body.aiBaseUrl ? urlOf(body.aiBaseUrl, 'AI API 地址') : user.settings.aiBaseUrl;
         const model = String(body.aiModel || user.settings.aiModel || '').trim();
-        const key = String(body.aiKey || user.settings.aiKey || '').trim();
+        const suppliedKey = String(body.aiKey || '').trim();
+        const key = suppliedKey || (body.activeAiKeyId ? selectedAiKey(user.settings, body.activeAiKeyId) : user.settings.aiKey) || '';
         if (!model) throw new Error('请先填写模型名称');
         if (model.length > 100) throw new Error('模型名称不能超过 100 个字符');
         if (!key) throw new Error('请先填写 API Key');
@@ -1307,8 +1319,8 @@ async function handler(request, response) {
         const webhooks = validateWebhooks(body.webhooks ?? user.settings.webhooks);
         const aiBaseUrl = body.aiBaseUrl === undefined ? user.settings.aiBaseUrl : body.aiBaseUrl ? urlOf(body.aiBaseUrl, 'AI API 地址') : 'https://api.openai.com/v1';
         const aiModel = body.aiModel === undefined ? user.settings.aiModel : String(body.aiModel || '').trim().slice(0, 100);
-        const aiKey = body.aiKey ? String(body.aiKey).trim().slice(0, 500) : user.settings.aiKey;
-        user.settings = { ...user.settings, webhooks, aiBaseUrl, aiModel, aiKey };
+        const aiKeys = aiKeysFromInput(user.settings, body);
+        user.settings = { ...user.settings, webhooks, aiBaseUrl, aiModel, ...aiKeys };
         const keptIds = new Set(webhooks.map((hook) => hook.id));
         for (const monitor of user.monitors) {
           monitor.webhookIds = monitor.webhookIds.filter((id) => keptIds.has(id));

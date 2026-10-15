@@ -17,6 +17,8 @@ let stateSyncVersion = 0;
 let workspacePoll = null, workspaceTag = null;
 let renderedMarkup = new WeakMap();
 let aiInputRevision = 0;
+let draftAiKeys = [];
+let draftActiveAiKeyId = '';
 const pendingActions = new Map();
 const emailTimers = new Map();
 let drawerAction = null;
@@ -170,9 +172,7 @@ function renderStats() {
   $('#active-count').textContent = appState.monitors.filter((monitor) => monitor.enabled && !monitor.completedAt).length;
   $('#sent-count').textContent = appState.sentCount || 0;
   $('#monitor-count').textContent = `${appState.monitors.length} 个任务`;
-  $('#key-indicator').textContent = appState.settings.hasAiKey ? '· 已配置' : '· 未设置';
-  $('#clear-ai-key-button').classList.toggle('hidden', !appState.settings.hasAiKey);
-  $('#ai-key').placeholder = appState.settings.hasAiKey ? '留空则保持当前 Key' : 'sk-...';
+  renderAiKeyStatus();
   $('#ai-status').textContent = appState.settings.hasAiKey && appState.settings.aiModel ? `点击后使用 ${appState.settings.aiModel} 生成本次规则或提醒` : '先在 AI 设置中连接模型，生成方案时才会调用';
 }
 
@@ -491,23 +491,83 @@ document.addEventListener('click', (event) => {
   copyText(JSON.stringify(shanghaiLogRecord(entry.raw), null, 2)).then(() => toast('原始记录已复制')).catch(() => toast('复制失败，请手动选择日志内容', true));
 });
 
+function selectedAiKeyDraft() {
+  return draftAiKeys.find((item) => item.id === draftActiveAiKeyId);
+}
+
+function rememberAiKeyEditor() {
+  const item = selectedAiKeyDraft();
+  if (!item) return;
+  item.name = $('#ai-key-name').value;
+  item.key = $('#ai-key').value.trim();
+}
+
+function resetAiTestResult() {
+  $('#ai-test-result').textContent = '';
+  $('#ai-test-result').className = '';
+  $('#ai-test-log').classList.add('hidden');
+}
+
+function markAiSettingsDirty() {
+  aiInputRevision++;
+  $('#settings-dirty').textContent = '未保存';
+  resetAiTestResult();
+}
+
+function renderAiKeyStatus() {
+  const item = selectedAiKeyDraft();
+  $('#key-indicator').textContent = item?.hasKey ? '· 已保存' : item ? '· 待保存' : '· 未设置';
+  $('#clear-ai-key-button').classList.toggle('hidden', !item);
+  $('#ai-key').placeholder = item?.hasKey ? '留空则保持此 Key' : item ? 'sk-...' : '点击添加 Key 后填写';
+}
+
+function renderAiKeyEditor() {
+  const select = $('#ai-key-select');
+  select.innerHTML = draftAiKeys.map((item, index) => '<option value="' + escapeHtml(item.id) + '">' + escapeHtml(item.name.trim() || 'API Key ' + (index + 1)) + '</option>').join('') || '<option value="">尚未添加 API Key</option>';
+  select.value = draftActiveAiKeyId;
+  select.disabled = !draftAiKeys.length;
+  const item = selectedAiKeyDraft();
+  $('#ai-key-name').value = item?.name || '';
+  $('#ai-key').value = item?.key || '';
+  $('#ai-key-name').disabled = !item;
+  $('#ai-key').disabled = !item;
+  renderAiKeyStatus();
+}
+
+function resetAiKeyDrafts() {
+  draftAiKeys = (appState.settings.aiKeys || []).map((item) => ({ ...item, key: '' }));
+  draftActiveAiKeyId = draftAiKeys.some((item) => item.id === appState.settings.activeAiKeyId) ? appState.settings.activeAiKeyId : draftAiKeys[0]?.id || '';
+  renderAiKeyEditor();
+}
+
 function populateSettings() {
   draftHooks = (appState.settings.webhooks || []).map((hook) => ({ ...hook }));
   renderWebhooks();
   renderSendTargets();
   $('#ai-base-url').value = appState.settings.aiBaseUrl || 'https://api.openai.com/v1';
   $('#ai-model').value = appState.settings.aiModel || '';
-  $('#ai-key').value = '';
+  resetAiKeyDrafts();
   renderSourceSettings(true);
-  $('#ai-test-result').textContent = '';
-  $('#ai-test-result').className = '';
-  $('#ai-test-log').classList.add('hidden');
+  resetAiTestResult();
   $('#settings-dirty').textContent = '';
 }
 
 function settingsBody(scope = 'ai') {
   if (scope === 'channels') return { webhooks: draftHooks.map((hook) => ({ ...hook })) };
-  return { aiBaseUrl: $('#ai-base-url').value.trim(), aiModel: $('#ai-model').value.trim(), aiKey: $('#ai-key').value.trim() };
+  rememberAiKeyEditor();
+  const missingKey = draftAiKeys.find((item) => !item.hasKey && !item.key);
+  if (missingKey) {
+    draftActiveAiKeyId = missingKey.id;
+    renderAiKeyEditor();
+    location.hash = '#ai-settings';
+    $('#ai-key').focus();
+    throw new Error('请填写「' + (missingKey.name.trim() || 'API Key') + '」的 Key，或删除此条目');
+  }
+  return {
+    aiBaseUrl: $('#ai-base-url').value.trim(), aiModel: $('#ai-model').value.trim(),
+    aiKeys: draftAiKeys.map((item, index) => ({ id: item.id, name: item.name.trim() || 'API Key ' + (index + 1), ...(item.key ? { key: item.key } : {}) })),
+    activeAiKeyId: draftActiveAiKeyId,
+  };
 }
 
 async function saveSettings(silent = false, scope = 'ai') {
@@ -519,7 +579,7 @@ async function saveSettings(silent = false, scope = 'ai') {
   renderWebhooks();
   renderSendTargets(previouslySelected);
   if (scope === 'ai' && inputRevision === aiInputRevision) {
-    $('#ai-key').value = '';
+    resetAiKeyDrafts();
     $('#settings-dirty').textContent = '';
   }
   render(true);
@@ -579,11 +639,13 @@ function resetAssistant(instruction = '', keepEditing = false) {
 }
 
 async function prepareAiSettings() {
-  if ((!appState.settings.hasAiKey && !$('#ai-key').value.trim()) || !$('#ai-model').value.trim()) {
+  rememberAiKeyEditor();
+  const item = selectedAiKeyDraft();
+  if ((!item?.hasKey && !item?.key) || !$('#ai-model').value.trim()) {
     location.hash = '#ai-settings';
     throw new Error('请先在 AI 生成设置中填写模型和 API Key');
   }
-  if ($('#settings-dirty').textContent || $('#ai-key').value || $('#ai-model').value !== appState.settings.aiModel || $('#ai-base-url').value !== appState.settings.aiBaseUrl) await saveSettings(true);
+  if ($('#settings-dirty').textContent || draftActiveAiKeyId !== appState.settings.activeAiKeyId || $('#ai-key').value || $('#ai-model').value !== appState.settings.aiModel || $('#ai-base-url').value !== appState.settings.aiBaseUrl) await saveSettings(true);
 }
 
 async function askAssistant() {
@@ -1189,7 +1251,7 @@ function collectPreviewRule() {
 
 async function withButton(button, work) {
   if (pendingActions.has(button)) return;
-  const group = ['save-button', 'ai-test-button', 'clear-ai-key-button'].includes(button.id) ? [...document.querySelectorAll('#settings-form button, #settings-form input')] : [];
+  const group = ['save-button', 'ai-test-button', 'clear-ai-key-button'].includes(button.id) ? [...document.querySelectorAll('#settings-form button, #settings-form input, #settings-form select')] : [];
   if (group.some((control) => pendingActions.has(control))) return;
   const operation = { epoch: workspaceEpoch, controls: group, disabled: group.map((control) => control.disabled) };
   group.forEach((control) => { control.disabled = true; });
@@ -1232,6 +1294,7 @@ function showAuth() {
   $('#recovery-code-screen').classList.add('hidden'); $('#recovery-code-value').textContent = '';
   draftHooks = []; editingMonitor = null;
   appState = { settings: { webhooks: [] }, monitors: [], events: [], logs: [], sentCount: 0 };
+  resetAiKeyDrafts();
   for (const selector of ['#monitor-list', '#webhook-list', '#send-targets', '#log-list', '#activity-list']) { const node = $(selector); if (node) node.innerHTML = ''; }
   closeTaskEditor();
   if (typeof resetOrderUI === 'function') resetOrderUI();
@@ -1469,8 +1532,31 @@ $('#drawer-delete').addEventListener('click', () => withDrawerAction($('#drawer-
   closeWebhookDrawer(true);
   toast('渠道已删除');
 }));
-$('#settings-form').addEventListener('input', () => { $('#settings-dirty').textContent = '未保存'; });
-$('#settings-form').addEventListener('change', () => { $('#settings-dirty').textContent = '未保存'; });
+$('#settings-form').addEventListener('input', (event) => {
+  if (event.target.id === 'ai-key-select') return;
+  rememberAiKeyEditor();
+  const item = selectedAiKeyDraft();
+  if (item) $('#ai-key-select').selectedOptions[0].textContent = item.name.trim() || 'API Key ' + (draftAiKeys.indexOf(item) + 1);
+  markAiSettingsDirty();
+});
+$('#ai-key-select').addEventListener('change', () => {
+  rememberAiKeyEditor();
+  draftActiveAiKeyId = $('#ai-key-select').value;
+  renderAiKeyEditor();
+  markAiSettingsDirty();
+});
+$('#add-ai-key-button').addEventListener('click', () => {
+  rememberAiKeyEditor();
+  let number = 1;
+  while (draftAiKeys.some((item) => item.name.trim() === 'API Key ' + number)) number++;
+  const item = { id: randomId(), name: 'API Key ' + number, hasKey: false, key: '' };
+  draftAiKeys.push(item);
+  draftActiveAiKeyId = item.id;
+  renderAiKeyEditor();
+  markAiSettingsDirty();
+  $('#ai-key-name').focus();
+  $('#ai-key-name').select();
+});
 
 $('#settings-form').addEventListener('submit', (event) => {
   event.preventDefault();
@@ -1479,12 +1565,15 @@ $('#settings-form').addEventListener('submit', (event) => {
 
 $('#ai-test-button').addEventListener('click', () => {
   withButton($('#ai-test-button'), async () => {
+    rememberAiKeyEditor();
+    const item = selectedAiKeyDraft();
+    if (!item?.hasKey && !item?.key) throw new Error('请先添加 API Key 并填写 Key');
     const result = $('#ai-test-result');
     result.textContent = '正在连接…';
     result.className = '';
     $('#ai-test-log').classList.add('hidden');
     try {
-      const report = await api('/api/ai/test', 'POST', { aiBaseUrl: $('#ai-base-url').value.trim(), aiModel: $('#ai-model').value.trim(), aiKey: $('#ai-key').value.trim() });
+      const report = await api('/api/ai/test', 'POST', { aiBaseUrl: $('#ai-base-url').value.trim(), aiModel: $('#ai-model').value.trim(), activeAiKeyId: draftActiveAiKeyId, ...(item.key ? { aiKey: item.key } : {}) });
       result.textContent = `连接成功 · ${report.durationMs} ms`;
       result.className = 'success';
       $('#ai-test-log').classList.remove('hidden');
@@ -1500,16 +1589,11 @@ $('#ai-test-button').addEventListener('click', () => {
   });
 });
 $('#clear-ai-key-button').addEventListener('click', () => {
-  withButton($('#clear-ai-key-button'), async () => {
-    appState = await api('/api/ai/key', 'DELETE');
-    $('#ai-key').value = '';
-    render();
-    toast('已清除保存的 API Key');
-  });
+  draftAiKeys = draftAiKeys.filter((item) => item.id !== draftActiveAiKeyId);
+  draftActiveAiKeyId = draftAiKeys[0]?.id || '';
+  renderAiKeyEditor();
+  markAiSettingsDirty();
 });
-for (const selector of ['#ai-base-url', '#ai-model', '#ai-key']) {
-  $(selector).addEventListener('input', () => { aiInputRevision++; $('#ai-test-result').textContent = ''; $('#ai-test-result').className = ''; $('#ai-test-log').classList.add('hidden'); });
-}
 
 $('#send-form').addEventListener('submit', (event) => {
   event.preventDefault();

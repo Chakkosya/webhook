@@ -673,6 +673,21 @@
   margin-left: 7px;
 }
 
+.ai-key-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ai-key-picker select {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-key-picker .button {
+  flex-shrink: 0;
+}
+
 .ai-key-actions {
   display: flex;
   justify-content: space-between;

@@ -18,6 +18,19 @@ test('执行日志在写入和导出时隐藏凭据、Cookie、存储、请求�
   }
   assert.equal(store.report(user,'m').operations[0].network.type,'http_proxy');assert.equal(store.report(user,'m').operations[0].context.quantity,1);assert.equal(store.report(user,'m').operations[0].context.couponFailurePolicy,'continue');assert.equal(store.report(user,'m').operations[0].result.receipt.review.couponFailure.status,'unverified');const basic=store.start(user,'m',{kind:'generate',task:{product:'Basic Plan'}});basic.finish('passed');assert.equal(store.report(user,'m').operations[0].context.product,'Basic Plan');
 });
+test('切换 API Key 后执行日志隐藏所有已保存的 Key',()=>{
+  const user=fixture(),firstKey='multi-private-A',secondKey='multi-private-B',store=createOrderExecutionLogs();
+  user.settings.aiKeys=[{id:'a',name:'账号 A',key:firstKey},{id:'b',name:'账号 B',key:secondKey}];
+  user.settings.activeAiKeyId='a';user.settings.aiKey=firstKey;
+  const log=store.start(user,'m',{kind:'generate'});
+  user.settings.activeAiKeyId='b';user.settings.aiKey=secondKey;
+  log.event('AI 请求失败',{detail:`AI 服务返回 ${firstKey} 与 ${secondKey}`});
+  log.finish('failed',{error:new Error(`${firstKey} ${secondKey}`)});
+  assert.equal(log.record.events.find(event=>event.action==='AI 请求失败').detail,'AI 服务返回 [已隐藏] 与 [已隐藏]');
+  for(const value of [user.orderExecutionLogs,store.report(user,'m')]){
+    const text=JSON.stringify(value);assert.ok(!text.includes(firstKey));assert.ok(!text.includes(secondKey));
+  }
+});
 test('日志限制操作数量、事件数量和字节数，保留最终结果并明确标记截断',()=>{
   const user=fixture(),store=createOrderExecutionLogs({maxRecords:3,maxEvents:4,maxBytes:4096});
   for(let run=0;run<7;run++){

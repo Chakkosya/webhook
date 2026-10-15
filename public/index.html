@@ -107,8 +107,11 @@
                 <section id="ai-settings" class="ai-settings settings-group" aria-labelledby="ai-settings-title"><form id="settings-form" class="stacked-form" novalidate=""><div class="ai-settings-heading"><h3 id="ai-settings-title">AI 生成设置</h3><p>自然语言生成规则需要你的 OpenAI 兼容 Chat Completions API</p></div>
                   <label for="ai-base-url" class="field-label">API 地址</label><input id="ai-base-url" type="url" placeholder="https://api.openai.com/v1" autocomplete="off">
                   <label for="ai-model" class="field-label">模型名称</label><input id="ai-model" type="text" placeholder="填写兼容 Chat Completions 的模型名" autocomplete="off">
-                  <label for="ai-key" class="field-label">API Key <span id="key-indicator" class="key-indicator"></span></label><input id="ai-key" type="password" placeholder="未设置" autocomplete="new-password">
-                  <div class="ai-key-actions"><span class="field-help">已保存的 Key 不会在页面中回显；输入新 Key 后保存即可替换。</span><button id="clear-ai-key-button" type="button" class="mini-button danger hidden">清除已保存的 Key</button></div>
+                  <label for="ai-key-select" class="field-label">当前 API Key <span id="key-indicator" class="key-indicator"></span></label>
+                  <div class="ai-key-picker"><select id="ai-key-select" data-native-select disabled><option value="">尚未添加 API Key</option></select><button id="add-ai-key-button" type="button" class="button button-outline">添加 Key</button></div>
+                  <label for="ai-key-name" class="field-label">Key 名称</label><input id="ai-key-name" type="text" maxlength="80" placeholder="例如：个人账号、备用账号" autocomplete="off" disabled>
+                  <label for="ai-key" class="field-label">API Key</label><input id="ai-key" type="password" placeholder="点击添加 Key 后填写" autocomplete="new-password" spellcheck="false" disabled>
+                  <div class="ai-key-actions"><span class="field-help">可添加多个 Key，保存后使用当前选中项。已保存的 Key 不回显，留空保留；API 地址与模型共用。</span><button id="clear-ai-key-button" type="button" class="mini-button danger hidden">删除此 Key</button></div>
                   <div class="ai-test-row"><button type="button" id="ai-test-button" class="button button-outline">测试 API 连接</button><span id="ai-test-result" aria-live="polite"></span></div><a id="ai-test-log" href="#activity" class="field-help hidden">查看连接日志 ↗</a>
                 <div class="settings-actions"><span id="settings-dirty" class="dirty-indicator" aria-live="polite"></span><button class="button button-dark" type="submit" id="save-button">保存 AI 设置</button></div>
                 </form></section>
