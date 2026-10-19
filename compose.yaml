@@ -12,6 +12,7 @@ services:
       HOST: 0.0.0.0
       PORT: "3000"
       DATA_DIR: /app/.data/workflow
+      CREDENTIALS_KEY: ${CREDENTIALS_KEY:-}
       SITE_USERNAME: ${SITE_USERNAME:-}
       SITE_PASSWORD: ${SITE_PASSWORD:-}
       AI_ENDPOINT: ${AI_ENDPOINT:-}

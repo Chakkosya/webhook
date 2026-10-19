@@ -2,19 +2,26 @@ import {createCipheriv,createDecipheriv,randomBytes} from 'node:crypto';
 import {readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {fail,Fault} from '../errors.js';
+function decodeKey(value,source) {
+  if(Buffer.isBuffer(value)&&value.length===32)return value;
+  const hex=value.toString('utf8').trim();
+  if(!/^[a-f\d]{64}$/i.test(hex))fail('CREDENTIALS_KEY',source==='credentials.key'?'credentials.key 必须是 32 字节二进制或 64 位十六进制密钥':'CREDENTIALS_KEY 必须是 64 位十六进制密钥');
+  return Buffer.from(hex,'hex');
+}
 export class CredentialStore {
-  constructor(db,dataDir){this.db=db;this.keyFile=join(dataDir,'credentials.key');}
+  constructor(db,dataDir,key=process.env.CREDENTIALS_KEY){this.db=db;this.keyFile=join(dataDir,'credentials.key');this.configuredKey=key;}
   async open() {
     this.db.exec('CREATE TABLE IF NOT EXISTS credentials(origin TEXT NOT NULL,account TEXT NOT NULL,secret TEXT NOT NULL,needs_login INTEGER NOT NULL,PRIMARY KEY(origin,account))');
+    if(this.configuredKey){this.key=decodeKey(this.configuredKey,'CREDENTIALS_KEY');return this;}
     try{this.key=await readFile(this.keyFile);}
     catch(error) {
       if(error.code!=='ENOENT')throw error;
-      if(this.db.prepare('SELECT COUNT(*) AS n FROM credentials').get().n)fail('CREDENTIALS_KEY','已保存账号缺少 credentials.key，请恢复密钥备份');
+      if(this.db.prepare('SELECT COUNT(*) AS n FROM credentials').get().n)fail('CREDENTIALS_KEY','已保存账号缺少密钥，请恢复 CREDENTIALS_KEY 或 credentials.key');
       const key=randomBytes(32);
       try{await writeFile(this.keyFile,key,{flag:'wx',mode:0o600});this.key=key;}
       catch(error){if(error.code!=='EEXIST')throw error;this.key=await readFile(this.keyFile);}
     }
-    if(this.key.length!==32)fail('CREDENTIALS_KEY','credentials.key 必须是 32 字节密钥');
+    this.key=decodeKey(this.key,'credentials.key');
     return this;
   }
   get(origin,account) {
@@ -24,7 +31,7 @@ export class CredentialStore {
       const {iv,tag,data}=JSON.parse(row.secret),cipher=createDecipheriv('aes-256-gcm',this.key,Buffer.from(iv,'base64'));
       cipher.setAAD(Buffer.from(JSON.stringify([origin,account])));cipher.setAuthTag(Buffer.from(tag,'base64'));
       return JSON.parse(Buffer.concat([cipher.update(Buffer.from(data,'base64')),cipher.final()]).toString('utf8'));
-    }catch(error){throw new Fault('CREDENTIALS_KEY','已保存账号无法解密，请核对 credentials.key',{cause:error});}
+    }catch(error){throw new Fault('CREDENTIALS_KEY','已保存账号无法解密，请核对 CREDENTIALS_KEY 或 credentials.key',{cause:error});}
   }
   status(origin,account) {
     const value=origin&&account?this.get(origin,account):null;

@@ -77,6 +77,47 @@ jobs:
             assert.ok((await response.text()).length>0,path);
           }
           JS
+      - name: Verify upgrade with a persisted hexadecimal key
+        timeout-minutes: 3
+        run: |
+          docker volume create workflow-upgrade-data
+          cleanup() {
+            docker logs workflow-upgrade || true
+            docker rm -fv workflow-upgrade || true
+            docker volume rm workflow-upgrade-data
+          }
+          trap cleanup EXIT
+          docker run --rm --interactive --mount source=workflow-upgrade-data,target=/app/.data \
+            --entrypoint node browser-workflow:test --input-type=module <<'JS'
+          import {writeFile} from 'node:fs/promises';
+          await writeFile('/app/.data/credentials.key',Buffer.alloc(32,7).toString('hex')+'\n',{mode:0o600});
+          await writeFile('/app/.data/state.json',JSON.stringify({users:[]}));
+          JS
+          docker run -d --init --name workflow-upgrade --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 \
+            --mount source=workflow-upgrade-data,target=/app/.data \
+            --env DATA_DIR=/app/.data -p 127.0.0.1:3000:3000 browser-workflow:test
+          wait_for_health() {
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent --max-time 2 http://127.0.0.1:3000/api/health; then return 0; fi
+              sleep 1
+            done
+            return 1
+          }
+          wait_for_health
+          docker restart workflow-upgrade
+          wait_for_health
+          test "$(docker inspect --format '{{.RestartCount}}' workflow-upgrade)" = 0
+          docker exec --interactive workflow-upgrade node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {readFile} from 'node:fs/promises';
+          assert.equal(await readFile('/app/.data/credentials.key','utf8'),Buffer.alloc(32,7).toString('hex')+'\n');
+          assert.equal(await readFile('/app/.data/state.json','utf8'),JSON.stringify({users:[]}));
+          const response=await fetch('http://127.0.0.1:3000/api/status',{signal:AbortSignal.timeout(5000)});
+          assert.equal(response.status,200);
+          assert.equal((await response.json()).configured,false);
+          console.log('Upgrade and restart preserve the existing key and state');
+          JS
       - name: Publish to GHCR
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/order-workflow-compatibility')
         env:
