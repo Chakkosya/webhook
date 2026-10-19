@@ -11,6 +11,7 @@ permissions:
 jobs:
   test-build-publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -33,29 +34,45 @@ jobs:
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             -t browser-workflow:test .
       - name: Verify bundled browser with a read-only root filesystem
+        timeout-minutes: 3
         run: |
-          docker run --rm --read-only --tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 \
-            --entrypoint xvfb-run browser-workflow:test -a node --input-type=module -e \
-            "import {chromium} from 'playwright-core'; const context=await chromium.launchPersistentContext('/app/.data/smoke',{headless:false,executablePath:process.env.BROWSER_EXECUTABLE}); const page=await context.newPage(); await page.setContent('<p id=ok>ready</p>'); if(await page.locator('#ok').textContent()!=='ready')process.exitCode=1; await context.close();"
+          docker run --rm --init --interactive --read-only --tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 \
+            --entrypoint xvfb-run browser-workflow:test -a node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {chromium} from 'playwright-core';
+          console.log('Launching bundled Chromium');
+          const context=await chromium.launchPersistentContext('/app/.data/smoke',{headless:false,executablePath:process.env.BROWSER_EXECUTABLE,timeout:60000});
+          console.log('Browser launched');
+          try {
+            const page=context.pages()[0];
+            await page.setContent('<p id="ok">ready</p>',{timeout:30000});
+            assert.equal(await page.locator('#ok').textContent({timeout:30000}),'ready');
+            console.log('Page rendering verified');
+          } finally {
+            await context.close();
+          }
+          console.log('Browser closed');
+          JS
       - name: Verify container startup and dashboard
+        timeout-minutes: 3
         run: |
-          docker run -d --name workflow-smoke --read-only \
+          docker run -d --init --name workflow-smoke --read-only \
             --tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 \
             -p 127.0.0.1:3000:3000 browser-workflow:test
           trap 'docker logs workflow-smoke; docker rm -fv workflow-smoke' EXIT
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:3000/api/health; then break; fi
+            if curl --fail --silent --max-time 2 http://127.0.0.1:3000/api/health; then break; fi
             sleep 1
           done
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict';
-          const health=await fetch('http://127.0.0.1:3000/api/health');
+          const health=await fetch('http://127.0.0.1:3000/api/health',{signal:AbortSignal.timeout(5000)});
           assert.equal(health.status,200);
           assert.equal((await health.json()).status,'ok');
-          const status=await(await fetch('http://127.0.0.1:3000/api/status')).json();
+          const status=await(await fetch('http://127.0.0.1:3000/api/status',{signal:AbortSignal.timeout(5000)})).json();
           assert.equal(status.configured,false);
           for(const path of ['/','/app.js','/style.css']) {
-            const response=await fetch('http://127.0.0.1:3000'+path);
+            const response=await fetch('http://127.0.0.1:3000'+path,{signal:AbortSignal.timeout(5000)});
             assert.equal(response.status,200,path);
             assert.ok((await response.text()).length>0,path);
           }
