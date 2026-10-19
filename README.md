@@ -1,161 +1,98 @@
-# Webhook Radar
+# Browser Workflow
 
-支持多用户的通知与监控工作台。每个账户独立管理 Webhook、AI 设置、监控规则、自动下单、活动记录和排查日志。概览、智能创建、任务与提醒、快速发送、通知渠道、AI 设置、读取设置、活动与日志、账户安全分别占用独立页面；左侧导航可折叠，手机上可横向滑动切换。页面地址中的锚点可直达相应功能，浏览器前进后退也会切换页面。Docker 镜像包含所需依赖及监控浏览器。
-
-AI 设置可保存多条带名称的 API Key，在“当前 API Key”中选择并保存后，AI 生成、修复和自动下单使用选中的 Key。新增、改名、替换或删除 Key 后统一保存；测试连接使用当前选择和填写的内容。各条 Key 共用 API 地址与模型名称，已保存的密钥不会回显。原有单条 Key 自动保留为“默认 API Key”。
-
-## Cloudflare 验证与账户凭证
-
-FlareSolverr 是可选侧车，默认关闭。它用独立浏览器处理验证，再把同域 Cookie 与 User-Agent 应用到订单浏览器；不会替换现有浏览器、Xvfb、代理或订单请求许可。账号会话保存 `cf_clearance` 与对应 User-Agent，后续操作优先恢复会话，不重复输入密码。
-
-### HTTPS 与加密存储
-
-账户凭证录入和远程登录必须通过 HTTPS，HTTP（包括 localhost）会被拒绝。在可信 HTTPS 反向代理后部署时，设置 `TRUST_PROXY=1`、`COOKIE_SECURE=1`；反向代理必须覆盖 `X-Forwarded-Proto` 为实际协议，后端只绑定回环地址或受控内网，不允许绕过代理直连。`COOKIE_SECURE` 本身不会提供 HTTPS。
-
-账户密码和会话存储加密后写入数据目录。未设置 `CREDENTIALS_KEY` 时，首次启动自动生成密钥并保存为数据目录中的 `credentials.key`，后续启动复用；已有明文凭证自动迁移，无需为升级手动添加环境变量。保留原数据卷，备份须包含 `credentials.key`。密钥与数据在同一目录，整目录泄露时这层加密不能提供保护。
-
-也可通过 `CREDENTIALS_KEY` 指定 64 位十六进制密钥，该值优先于密钥文件；显式密钥不复制到数据目录，须独立备份。已有加密数据缺少密钥、密钥文件损坏或密钥错误时停止启动，不覆盖数据。不要更换正在使用的密钥；丢失后无法恢复已有凭证。旧备份中的明文需要单独清理。
-
-### 启用 FlareSolverr
-
-Compose 同目录的 `.env` 设置：
-
-```dotenv
-FLARESOLVERR_ENABLED=1
-FLARESOLVERR_URL=http://flaresolverr:8191/v1
-FLARESOLVERR_TIMEOUT_MS=60000
-FLARESOLVERR_SESSION_TTL=15
-```
-
-`FLARESOLVERR_SESSION_TTL` 单位为分钟，默认 15。客户端使用 v1 API（核对 FlareSolverr v3.5.2 README）：`sessions.create`、`request.get`、`sessions.destroy`。会话按账户、站点及代理隔离，过期销毁重建。URL 可填写服务根地址或完整 `/v1` 地址。
-
-```sh
-docker compose --profile flaresolverr up -d --wait --wait-timeout 300 flaresolverr
-docker compose up -d webhook-radar
-```
-
-侧车只有 Docker 内网 `8191`，没有宿主机端口映射；不要为它添加 `ports`。首次启动较慢，健康检查通过后再启动业务。源码构建部署使用同样命令并增加 `-f compose.build.yaml`。关闭时设置 `FLARESOLVERR_ENABLED=0` 并重建业务容器，原挑战处理保持不变。
-
-检测到挑战后，订单浏览器尝试解验证并重新读取页面。trace 的「FlareSolverr 解验证」只包含成功状态、耗时及是否取得 clearance，不记录 Cookie 值。解不开时转入人工处理：打开该账户的登录窗口完成验证，确认登录后保存会话，再重试 generate/trial。提交或付款已经开始时不再启动解验证或重新发送交易。
-
-### 已知限制
-
-- FlareSolverr 的价值是浏览器解耦，不保证通过 Cloudflare。它也需要干净的出口 IP，通过率会随 Cloudflare 更新波动。
-- 侧车与主浏览器必须使用一致的出口；代理地址必须从两个容器都可达，侧车中的 `127.0.0.1` 不指向业务容器。短期本机代理需改为侧车可达的代理配置。
-- 人工验证仍可能受站点策略限制。只取得 clearance 不等于账户已登录，保存账户会话仍需通过原有登录校验。
-- 本地模拟测试覆盖 cookie 注入、User-Agent、完整 dry-run 和人工降级；`https://app.vmiss.com/` 的真实解验证验收需在有 FlareSolverr 的环境执行。
-
-## Docker Compose 部署
-
-安装 Docker 后，在服务器运行一条命令：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/godluo666/webhook/main/install.sh | bash
-```
-
-安装脚本会检查 Docker 和 Compose，先尝试拉取 GHCR 中最新的预构建镜像并更新容器；若镜像不可拉取，就从公开仓库自动构建。脚本会临时取得 Compose 配置并在结束时删除，不会遇到远程 Compose 配置的交互确认；无需手动下载文件或执行 `git clone`。**以后升级时重新运行同一条命令即可**，数据卷不会删除。只想从源码构建时，可直接执行：
-
-```bash
-docker compose -p webhook-radar -f https://github.com/godluo666/webhook.git#main:compose.build.yaml up -d --build --wait --wait-timeout 90
-```
-
-默认仅服务器本机可打开 <http://127.0.0.1:3000>。需要从其他设备访问时，明确开放 3000 端口并重建容器：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/godluo666/webhook/main/install.sh | env RADAR_BIND=0.0.0.0 bash
-```
-
-然后打开 `http://服务器IP:3000`。若仍无法连接，请检查服务器防火墙和云平台安全组是否放行 TCP 3000。数据保存在 Docker 命名卷中，重建后仍会保留；更新时再次运行所选的命令即可。对外开放注册时建议设置 `SIGNUP_CODE`。
-
-仓库中的 `compose.yaml` 使用预构建的 GHCR 镜像。镜像包公开后，或服务器已经登录 GHCR 时，可以直接用 Compose 拉取并升级：
-
-```bash
-docker compose -p webhook-radar -f https://github.com/godluo666/webhook.git up -d --pull always --wait --wait-timeout 90
-```
-
-GitHub 仓库公开与 GHCR 镜像包公开是两项独立设置。镜像包仍为私有时，直接拉取镜像需要先登录有权限的 GitHub 账户；一键脚本会自动改用本机构建。升级时沿用原来的 `RADAR_BIND`、`RADAR_PORT` 等环境变量，以保持访问地址不变。
-
-## 在 1Panel 中更新镜像
-
-镜像地址固定为 `ghcr.io/godluo666/webhook:latest`。`main` 或 `fix/order-workflow-compatibility` 分支通过全部构建与容器验证后会更新这个标签。1Panel 要从 GHCR 拉取，镜像包必须允许服务器访问：到 GitHub 账户的 **Packages → webhook → Package settings → Change visibility**，设为 **Public**。仅将代码仓库设为公开不会改变镜像包的可见性。公开后先在服务器验证：
-
-```bash
-docker pull ghcr.io/godluo666/webhook:latest
-```
-
-之前一键安装若回退到 `webhook-radar:local`，请再运行一次上面的一键命令，让现有容器改用 GHCR 镜像；数据仍在 `webhook-radar_radar_data` 卷中。之后在 1Panel 的**容器列表**选中 `webhook-radar` 对应的容器，使用容器的**升级／更新镜像**操作，拉取 `latest` 并重建容器。只在**镜像列表**点“拉取”不会更新已经运行的容器。若要由 1Panel 管理整个编排，可以将仓库的 `compose.yaml` 粘贴到 1Panel 新建编排的编辑器中；请在编排变量中设置 `RADAR_BIND=0.0.0.0`，沿用相同的数据卷，先停止旧容器以免 3000 端口冲突。
-
-## 自动下单验证
-
-创建监控时可勾选“同时配置自动下单”，在预览中填写购买数量、累计预算、币种和执行范围，也可让 AI 继续修改购买要求。监控与下单分别保存；只监控无需填写购买信息。保存购买要求后直接设置网站登录并启用，无需重新打开监控编辑。
-
-通用流程为恢复登录 → 识别商品 → 配置规格和数量 → 核验购物车 → 应用并核验可选优惠 → 核对含税总价、币种与付款意图 → 提交本笔 → 核实订单结果，授权付款时再核对原账单并付款。站点可以合并或省略页面，但核验步骤由程序执行。已学页面优先复用；首次适配、绑定失效或存在歧义时才局部请求 AI。保存登录和购买配置后即可启用监控下单，无需提前试跑成功。监控满足条件时，在同一浏览器中核对当前订单并按执行范围提交或付款；仍缺货时继续等待下一次触发，未知交易结果不重试。试跑为可选操作，停在最终提交前。
-
-每次准备试跑或执行开启新一轮日志，查看、复制和下载只包含最新一轮；日志及界面步骤时间固定为北京时间（Asia/Shanghai，UTC+8）。
-
-认证失败时保留配置与会话，恢复登录后可直接重新启用。缺货任务保留业务 SOP 和已识别步骤，可直接启用等待监控触发；补货后实时核对商品、数量、规格、总价、币种和请求字段，不另跑一轮预检。每笔订单确认成功后才能继续剩余购买；付款模式需本笔付款确认后继续。结果未知、付款待确认或剩余预算不足时保留各笔交易记录并停止。
+AI 在场外学习、诊断和修补，确定性引擎执行已验证工作流。站点类型由实际学习资料确定；WHMCS 是一个可选适配器。
 
 ## 启动
 
-需要 Node.js 20.18.1 或更新版本，建议使用 Node.js 24。
+需要 Node.js 24 和 Chromium。
 
 ```bash
 npm ci --ignore-scripts
-node server.js
+node node_modules/playwright-core/cli.js install chromium
+npm start
 ```
 
-打开 <http://127.0.0.1:3000>，注册账户后使用。`PORT` 可设置端口，`HOST` 可设置监听地址；默认只监听本机。进程需要持续运行，监控任务才会按间隔检查。设置和数据保存在 `.data/state.json`。
+打开 <http://127.0.0.1:3000>。尚未确定目标站点时，可以启动工作台。配置和学习资料补齐后，再登录、试运行与发布。
 
-直接运行 Node 时，`.env` 不会自动加载。若把邮件参数写入 `.env`，请使用 `node --env-file=.env server.js` 启动；Docker Compose 则会读取同目录的 `.env`。
+工作台按概况、登录账户、工作流仓库、执行记录和购买配置分别显示。导航支持刷新与前进后退，切换页面保留未保存的表单内容。工作流和执行记录每页显示 10 条。
 
-可选环境变量：
+Windows PowerShell 可使用 `npm.cmd`。已安装浏览器可通过 `BROWSER_EXECUTABLE` 指定。数据默认保存在 `.data/workflow`，可用 `DATA_DIR` 更改。
 
-| 变量 | 用途 |
+## 接入实际站点
+
+1. 确定商品链接，采集成功操作记录和实测耗时。
+2. 填写 `examples/config.template.json`。已学习的原生表单或动作链接使用 `adapter: "learned"`；WHMCS 可使用 `examples/whmcs.config.template.json`。
+3. 录入实际的登录、库存、报价、订单记录和提交结果证据。在工作台“登录账户”中保存账号密码并登录。订单标识可包含字母和数字。
+4. 导入工作流，同一版本、同一参数连续试运行通过两次后发布。
+5. 直接执行或启用浏览器双确认补货监控。
+
+```bash
+npm run cli -- configure --file config.json
+npm run cli -- login
+npm run cli -- import --file learned-workflow.json
+npm run cli -- trial --id product-order --version 1
+npm run cli -- trial --id product-order --version 1
+npm run cli -- publish --id product-order --version 1
+npm run cli -- watch --id product-order --version 1 --mode live
+```
+
+`goal: "invoice"` 表示创建订单或账单后停止，由人工继续支付。`goal: "pay"` 表示创建后执行已学习的余额付款流程。余额不足可创建待支付订单；自动余额付款在提交前检查余额。
+
+## 架构
+
+| 模块 | 职责 |
 | --- | --- |
-| `DATA_DIR` | 数据目录，默认项目内 `.data` |
-| `SIGNUP_CODE` | 设置后，新用户注册必须填写此邀请码 |
-| `COOKIE_SECURE=1` | 经 HTTPS 访问时，为登录 Cookie 加上 Secure 标志 |
-| `CREDENTIALS_KEY` | 可选的 64 位十六进制凭证加密密钥；留空时自动生成并持久化至数据目录的 `credentials.key` |
-| `TRUST_PROXY=1` | 仅在可信 HTTPS 反向代理后启用，接受代理覆盖的协议标头 |
-| `FLARESOLVERR_ENABLED` | 默认 `0`；设为 `1` 启用侧车解验证 |
-| `FLARESOLVERR_URL` | 默认 `http://flaresolverr:8191/v1`，仅使用受信内网服务 |
-| `FLARESOLVERR_TIMEOUT_MS` | 默认 `60000`，解验证超时（毫秒） |
-| `FLARESOLVERR_SESSION_TTL` | 默认 `15`，侧车会话有效期（分钟） |
-| `RESEND_API_KEY` | 邮箱验证码发信服务的 API Key |
-| `MAIL_FROM` | 发件地址，须属于已在 Resend 验证的域名 |
-| `HTTP_PROXY` / `HTTPS_PROXY` | Node.js 24.14+ 会自动使用代理，并跳过本地地址；较旧版本请通过运行环境配置网络 |
-| `ORDER_AI_TIMEOUT_MS` | 普通单次下单 AI 请求等待时间，默认 120000（2 分钟），范围 1000–300000 |
-| `ORDER_AGENT_TIMEOUT_MS` | 普通每轮动态探索预算，默认 600000（10 分钟），范围 1000–1800000 |
-| `ORDER_TRIAL_TIMEOUT_MS` | 生成 SOP 与一次试跑的总预算，默认 1500000（25 分钟），范围 1000–3600000 |
-| `ORDER_RESTOCK_AI_TIMEOUT_MS` | 补货触发单次 AI 请求等待时间，默认 180000（3 分钟），范围 1000–300000 |
-| `ORDER_RESTOCK_AGENT_TIMEOUT_MS` | 补货触发每轮探索预算，默认 1800000（30 分钟），范围 1000–1800000 |
-| `BROWSER_MAX_SLOTS` | 下单浏览器总并发，默认 4 |
-| `BROWSER_BACKGROUND_MAX` | 后台浏览器并发，默认 2；补货等待优先于后台等待 |
-| `BROWSER_VERIFY_MAX` | 登录会话校验并发，默认 1 |
-| `MONITOR_BROWSER_EXECUTABLE` | 直接运行 Node 时指定 Chrome / Chromium 可执行文件，Docker 已内置 |
-| `MONITOR_BROWSER_ENABLED=0` | 关闭浏览器读取，默认启用 |
-| `MONITOR_TEMP_DIR` | 可选私有临时目录；新版 Docker 的浏览器和代理临时文件使用 /tmp，Compose 挂载有容量上限的 tmpfs |
-| `MONITOR_SS_EXECUTABLE` | 直接运行 Node 时指定 shadowsocks-rust 的 `sslocal` 可执行文件，需支持 HTTP 本地代理；Docker 已内置，无需额外配置 |
-| `MONITOR_PROXY_TEST_URL` | 可选的代理出网检测地址，应返回 JSON `{ "ip": "出口IP" }`、纯 IP 或 Cloudflare trace；不配置时使用内置检测服务及备用服务 |
-| `MONITOR_BROWSER_HEADLESS=1` | Linux 上使用无界面浏览器，默认在 Xvfb 中运行 |
-| `MONITOR_LOG_ROOT` | 可选的日志目录根路径；每个账户只读取其中以自身账户 ID 命名的子目录。默认 `.data/monitor-logs` |
+| `src/safety` | 一次性许可、持久化防重放、预算门禁、本地与商家判重 |
+| `src/browser` | 常驻浏览器、账户会话、保活、请求门禁、进展检测 |
+| `src/workflow` | 声明式工作流、版本、diff、发布、回滚、准入和统计 |
+| `src/engine` | 前置检查 → 动作 → 后置验证，零推理 |
+| `src/adapters/learned` | 执行本站点已学习的库存、报价、订单和付款证据 |
+| `src/adapters/whmcs` | WHMCS 的数字账单标识与账单链接约定 |
+| `src/monitor` | 浏览器只读监控、即时双确认、单次触发 |
+| `src/extractor` | 成功轨迹清洗、参数化、成功耗时提炼 |
+| `src/ai` | 独立进程中的生成、诊断和修补 |
+| `src/locators` | 选择器与图像锚点降级，按实际定位成功率排序 |
+| `src/healthcheck` | SSH 购后 CPU、IO、网络与路由检查 |
 
-浏览器并发参数须为正整数，预算须在上述范围内，非法值回退到默认值。AI 超时、429、5xx 和连接重置只重试当前请求：普通流程最多重试 1 次，补货流程最多 2 次，分别退避 1 秒、2 秒；401 不重试。优惠码与登录核验普通流程等待 12 秒，补货等待 30 秒。补货的定位探针等待 10 秒，页面动作等待 60 秒、导航等待 120 秒；已许可请求发出等待 20 秒、响应和跳转分别等待 120 秒。请求许可仍为一次性，提交或付款不因超时重复执行。
+账号密码按站点和账户加密保存，密码不回显。浏览器启动时恢复会话、登录和预热，之后定时检测掉线并自动重登。更换登录账号后需要重新试运行。工作流 JSON 不运行脚本。每个真实写请求都核对地址、方法与完整表单值，许可在放行网络前消费。未核验的写操作保留未知状态，进程重启后也不能自动重放。
 
-补货触发立即进入决战模式，启动时先核验登录，会话明确失效且已保存凭据时先刷新再核验。提交前的临时失败立即通知，每 3 分钟重试一次，重试窗口上限 2 小时；连续失败只告警，用户可随时暂停。格式、鉴权、需要人工输入、提交或付款相关失败不自动重试。
+超时取对应成功样本的最大值再加明确余量。网络收包和页面内容变化更新进展时间；无进展上限与绝对上限分别约束等待。监控与下单使用独立策略。
 
-每次决战重试先检查本地持久化记录：已有订单结果、提交开始或付款开始任一命中即停止，结果未知转人工核实。WHMCS 另查后台账单，按商品、准确金额及时间窗口匹配；后台状态未知同样停止。通用站点在 trace 标记“未核验商家后台”。服务重启不恢复决战定时重试，需人工核对后重新启用。
+## 验证与统计
 
-只加载 `users` 中的多用户数据；旧版未认领工作区和认领码已移除。现有账户名下的监控和 Webhook 会保留。
+```bash
+npm run test:safety
+npm test
+```
 
-邮箱验证码通过 [Resend 邮件 API](https://resend.com/docs/send-with-nodejs) 发送，不需要自建邮局。先在 Resend 验证发件域名，设置 `RESEND_API_KEY` 和 `MAIL_FROM`，例如 `Webhook Radar <notify@example.com>`。两项均配置后，新账户注册必须填写邮箱、接收 6 位验证码并在 10 分钟内验证；已登录用户绑定或更换邮箱也需要当前密码和发往新邮箱的验证码。验证码每 60 秒最多重发一次，每个邮箱每小时最多 5 次，输入错误达到 5 次后失效。服务重启后未使用的验证码失效。
+测试使用真实 Chromium，分别覆盖 WHMCS 和独立商城。独立商城使用中文库存、POST 购物车和字母数字订单号。两条链路都统计实际请求，验证两次试跑准入、预算、商家判重和提交凭证。
 
-未配置邮件服务时，用户仍可用用户名和密码注册，但不能绑定未经验证的邮箱；页面会明确显示邮件服务尚未启用。注册后会显示一次恢复码，请妥善保存。忘记密码时，用用户名和恢复码设置新密码；恢复成功后恢复码会换新。已登录用户可以修改密码或凭当前密码重新生成恢复码。
+每次执行保存版本、步骤耗时、定位方式、核验结果、原始错误链和推理调用数。真实执行统计与试运行分开。连续三次失败的工作流标为过期，重新学习后发布新版本。
 
-多代理选择、自动下单与付款、资源释放和负载诊断的配置及升级说明见 [功能与升级说明](docs/order-proxy-resources.md)。
+## 部署
 
-### 数量和累计预算
+镜像：`ghcr.io/chakkosya/webhook:latest`。发布同时提供 `sha-<提交前12位>` 固定标签。
 
-数量是希望购买的最大数量，总价上限覆盖本轮所有订单的含税费费用。优先尝试目标数量；商家库存或单笔限制不足时按明确的可购数量调整，超预算时递减数量并重新读取实际报价。每笔确认成功后，按剩余数量和剩余预算继续，最多购买配置数量。结果展示各笔订单、实际累计数量和金额、未完成原因；不会重复提交结果未知的订单。
+```bash
+docker compose pull
+docker compose up -d
+```
 
-预算币种支持常见 ISO 代码及中英文名称搜索。留空时只能从商家明确的三位币种识别，并在后续订单固定使用该币种。新配置默认提交订单；已有配置的执行范围保持原选择。两个执行位置繁忙时保留并合并补货触发，空闲后执行；暂停或修改配置会撤销待执行项。
+从源码构建：
+
+```bash
+docker compose -f compose.build.yaml up -d --build
+```
+
+容器包含匹配版本的 Chromium 和 Xvfb，工作台默认仅绑定本机。持久化卷保存数据库、浏览器配置和图像锚点。GitHub Actions 在全量测试、只读容器浏览器检查和启动检查通过后发布镜像。
+
+[站点学习与操作说明](docs/operations.md)包含字段约定、场外 AI 配置、人工处理和 API。
+
+## 已知限制
+
+- 接入每个真实站点都需要实际页面、成功操作与实测耗时；未学习、未验证的站点不能真实下单。
+- 当前执行原生表单和原生动作链接。依赖自定义 JavaScript 提交的页面需要补充本站点请求适配。
+- 下单前必须能核实账户登录状态并完整读取商家订单记录。
+- 自动付款仅支持已学习的账户余额付款；外部收银台、扫码与二次验证交由人工处理。
+- 需要人工交互的人机验证由操作员在登录窗口完成。
+- 图像锚点适用于相同缩放与相近布局；大幅改版需要重新采集。

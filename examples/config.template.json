@@ -1,0 +1,141 @@
+{
+  "site": {
+    "adapter": "learned",
+    "account": "main",
+    "product": "product-1",
+    "origin": "https://merchant.example",
+    "provenance": {
+      "source": "填写本站点成功操作记录的路径"
+    },
+    "currencyDecimals": 2,
+    "accountUrl": "https://merchant.example/account",
+    "historyUrl": "https://merchant.example/account/orders",
+    "monitorUrl": "https://merchant.example/products/product-1",
+    "orderUrl": "https://merchant.example/cart/add",
+    "warmupUrls": [],
+    "timing": {
+      "order": {
+        "samplesMs": [],
+        "marginMs": 0,
+        "idleMs": 0
+      },
+      "monitor": {
+        "samplesMs": [],
+        "marginMs": 0,
+        "idleMs": 0
+      }
+    },
+    "authenticated": [
+      {
+        "kind": "visible",
+        "selector": ""
+      }
+    ],
+    "reads": [
+      {
+        "path": "/account"
+      },
+      {
+        "path": "/account/orders"
+      },
+      {
+        "path": "/products/product-1"
+      },
+      {
+        "path": "/order/complete"
+      }
+    ],
+    "writes": [
+      {
+        "operation": "cart",
+        "method": "POST",
+        "path": "/cart/add"
+      },
+      {
+        "operation": "submit",
+        "method": "POST",
+        "path": "/order/place"
+      }
+    ],
+    "browserRequests": [],
+    "stock": {
+      "scope": "",
+      "page": [
+        {
+          "kind": "text",
+          "selector": "",
+          "equals": "填写实际商品名"
+        }
+      ],
+      "form": "",
+      "fields": [
+        {
+          "selector": "",
+          "value": "product-1"
+        }
+      ],
+      "submit": "",
+      "soldOut": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ]
+    },
+    "history": {
+      "complete": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "rows": "",
+      "fields": {
+        "product": "",
+        "quantity": "",
+        "currency": "",
+        "reference": ""
+      }
+    },
+    "quote": {
+      "product": "",
+      "quantity": "",
+      "total": "",
+      "currency": "",
+      "paymentMethod": ""
+    },
+    "confirmation": {
+      "url": {
+        "path": "/order/complete"
+      },
+      "ready": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "id": "",
+      "idPattern": ""
+    }
+  },
+  "intent": {
+    "key": "purchase-001",
+    "account": "main",
+    "product": "product-1",
+    "quantity": 1,
+    "currency": "USD",
+    "budgetMinor": 15000,
+    "paymentMethod": "credit"
+  },
+  "parameters": {},
+  "goal": "invoice",
+  "headless": false,
+  "keepAliveMs": 60000,
+  "ai": {
+    "command": "node",
+    "args": [
+      "src/ai/provider.js"
+    ],
+    "timeoutMs": 120000
+  }
+}

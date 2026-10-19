@@ -1,0 +1,154 @@
+{
+  "site": {
+    "adapter": "whmcs",
+    "account": "main",
+    "product": "5",
+    "origin": "https://merchant.example",
+    "provenance": {
+      "source": "填写本站点成功操作记录的路径"
+    },
+    "currencyDecimals": 2,
+    "accountUrl": "https://merchant.example/clientarea.php",
+    "historyUrl": "https://merchant.example/clientarea.php?action=invoices",
+    "monitorUrl": "https://merchant.example/cart.php?gid=5",
+    "orderUrl": "https://merchant.example/cart.php?a=add&pid=5",
+    "warmupUrls": [],
+    "timing": {
+      "order": {
+        "samplesMs": [],
+        "marginMs": 0,
+        "idleMs": 0
+      },
+      "monitor": {
+        "samplesMs": [],
+        "marginMs": 0,
+        "idleMs": 0
+      }
+    },
+    "authenticated": [
+      {
+        "kind": "visible",
+        "selector": ""
+      }
+    ],
+    "reads": [
+      {
+        "path": "/clientarea.php"
+      },
+      {
+        "path": "/clientarea.php",
+        "query": {
+          "action": "invoices"
+        }
+      },
+      {
+        "path": "/cart.php",
+        "query": {
+          "gid": "5"
+        }
+      },
+      {
+        "path": "/viewinvoice.php",
+        "query": {
+          "id": "$digits"
+        }
+      }
+    ],
+    "writes": [
+      {
+        "operation": "cart",
+        "method": "GET",
+        "path": "/cart.php",
+        "query": {
+          "a": "add",
+          "pid": "5"
+        }
+      },
+      {
+        "operation": "submit",
+        "method": "POST",
+        "path": "/cart.php",
+        "query": {
+          "a": "checkout"
+        }
+      }
+    ],
+    "browserRequests": [],
+    "stock": {
+      "scope": "",
+      "page": [
+        {
+          "kind": "text",
+          "selector": "",
+          "equals": "填写实际商品名"
+        }
+      ],
+      "form": "",
+      "fields": [
+        {
+          "selector": "",
+          "value": "5"
+        }
+      ],
+      "submit": "",
+      "soldOut": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ]
+    },
+    "history": {
+      "complete": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "rows": "",
+      "fields": {
+        "invoiceId": "",
+        "product": "",
+        "quantity": "",
+        "currency": ""
+      }
+    },
+    "quote": {
+      "product": "",
+      "quantity": "",
+      "total": "",
+      "currency": "",
+      "paymentMethod": ""
+    },
+    "invoice": {
+      "url": {
+        "path": "/viewinvoice.php",
+        "query": {
+          "id": "$digits"
+        }
+      },
+      "id": "",
+      "idQuery": "id"
+    }
+  },
+  "intent": {
+    "key": "purchase-001",
+    "account": "main",
+    "product": "5",
+    "quantity": 1,
+    "currency": "USD",
+    "budgetMinor": 15000,
+    "paymentMethod": "credit"
+  },
+  "parameters": {},
+  "goal": "invoice",
+  "headless": false,
+  "keepAliveMs": 60000,
+  "ai": {
+    "command": "node",
+    "args": [
+      "src/ai/provider.js"
+    ],
+    "timeoutMs": 120000
+  }
+}

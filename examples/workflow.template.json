@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "id": "product-order",
+  "provenance": {
+    "kind": "site-recording",
+    "source": "填写本站点成功操作记录的路径"
+  },
+  "couponPolicy": "remove-and-continue",
+  "steps": [
+    {
+      "id": "catalog",
+      "action": "navigate",
+      "url": "https://merchant.example/products/product-1",
+      "pre": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "post": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "timing": {
+        "order": {
+          "samplesMs": [],
+          "marginMs": 0,
+          "idleMs": 0
+        }
+      }
+    },
+    {
+      "id": "cart",
+      "action": "cart",
+      "target": {
+        "selector": ""
+      },
+      "request": {
+        "operation": "cart",
+        "method": "POST",
+        "path": "/cart/add"
+      },
+      "pre": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "post": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "timing": {
+        "order": {
+          "samplesMs": [],
+          "marginMs": 0,
+          "idleMs": 0
+        }
+      }
+    },
+    {
+      "id": "submit",
+      "action": "submit",
+      "target": {
+        "selector": ""
+      },
+      "request": {
+        "operation": "submit",
+        "method": "POST",
+        "path": "/order/place"
+      },
+      "pre": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "post": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "timing": {
+        "order": {
+          "samplesMs": [],
+          "marginMs": 0,
+          "idleMs": 0
+        }
+      }
+    }
+  ]
+}

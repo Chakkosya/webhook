@@ -2,166 +2,170 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#fafafa">
-  <title>Webhook Radar · 通知与监控</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#eef2f7">
+  <title>确定性工作流</title>
   <link rel="stylesheet" href="/style.css">
-  <link rel="stylesheet" href="/extra.css">
-  <link rel="stylesheet" href="/spatial.css">
-  <link rel="stylesheet" href="/premium.css">
-  <link rel="stylesheet" href="/controls.css">
-  <link rel="stylesheet" href="/minimal.css">
-  <link rel="stylesheet" href="/orders.css">
-  <script src="/choices.js" defer></script>
-  <script src="/panels.js" defer></script>
-  <script src="/rule-ui.js" defer></script>
-  <script src="/app.js" defer></script>
-  <script src="/orders-ui.js" defer></script>
-  <script src="/order-execution-log-ui.js" defer></script>
 </head>
 <body>
-  <main id="auth-screen" class="auth-screen hidden"><div class="auth-panel"><div class="auth-mark">✦</div><div class="eyebrow">WEBHOOK RADAR</div><h1>你的通知工作台</h1><p>登录后管理自己的通知渠道、监控和定时提醒。每个账户的数据独立保存。</p><div class="auth-tabs"><button type="button" id="show-login" class="active">登录</button><button type="button" id="show-register">注册</button><button type="button" id="show-recover">找回密码</button></div><form id="auth-form" class="stacked-form"><label class="field-label" for="auth-username">用户名</label><input id="auth-username" type="text" required autocomplete="username" minlength="3" maxlength="32"><div id="auth-email-wrap" class="hidden"><label class="field-label" for="auth-email">邮箱</label><input id="auth-email" type="email" autocomplete="email" placeholder="用于验证并绑定账户"><label class="field-label" for="auth-email-code">邮箱验证码</label><div class="code-send-row"><input id="auth-email-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="6 位验证码"><button type="button" id="send-register-code" class="mini-button">发送验证码</button></div><p id="register-code-status" class="field-help" aria-live="polite">验证码 10 分钟有效。</p></div><p id="auth-email-unavailable" class="field-help hidden">邮件服务尚未配置，当前可使用用户名注册；请保存注册后显示的恢复码。</p><div id="auth-code-wrap" class="hidden"><label class="field-label" for="auth-recovery-code">恢复码</label><input id="auth-recovery-code" type="text" autocomplete="off" spellcheck="false" placeholder="注册时保存的恢复码"></div><label class="field-label" for="auth-password" id="auth-password-label">密码</label><input id="auth-password" type="password" required autocomplete="current-password" minlength="12"><div id="invite-wrap" class="hidden"><label class="field-label" for="auth-invite">注册邀请码</label><input id="auth-invite" type="text" autocomplete="off"></div><button class="button button-primary" id="auth-submit" type="submit">登录</button></form></div></main>
-  <div id="recovery-code-screen" class="recovery-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="recovery-code-title"><div class="auth-panel"><div class="auth-mark">✦</div><h2 id="recovery-code-title">保存账户恢复码</h2><p>忘记密码时，使用用户名、恢复码设置新密码。它只显示这一次，请复制并妥善保存。每次使用后会换新。</p><div id="recovery-code-value" class="recovery-code-value"></div><button type="button" id="copy-recovery-code" class="button button-outline">复制恢复码</button><button type="button" id="close-recovery-code" class="button button-primary">我已保存</button></div></div>
-  <div class="app-shell auth-hidden">
-    <aside class="sidebar" id="sidebar">
-      <a class="brand" href="#top" aria-label="Webhook Radar 首页"><span class="brand-mark">✳</span><span class="brand-name">webhook<span class="brand-light">radar</span></span></a>
-      <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-controls="sidebar" aria-label="展开导航" aria-expanded="false" title="展开导航"><span aria-hidden="true">‹</span></button>
-      <nav class="side-nav" aria-label="主导航">
-        <a class="nav-link" href="#top" aria-label="概览"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg></span><span class="nav-text">概览</span></a>
-        <a class="nav-link" href="#create" aria-label="智能创建"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2"/><path d="M12 3.5v2M20.5 12h-2M12 20.5v-2M3.5 12h2"/></svg></span><span class="nav-text">智能创建</span></a>
-        <a class="nav-link" href="#monitors" aria-label="任务与提醒"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg></span><span class="nav-text">任务与提醒</span></a>
-        <a class="nav-link" href="#notifications" aria-label="快速发送"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 20 4l-5.7 16-3.2-6.8L3 11.5Z"/><path d="m11.1 13.2 4.8-4.5"/></svg></span><span class="nav-text">快速发送</span></a>
-        <div class="nav-divider" aria-hidden="true"></div>
-        <a class="nav-link" href="#channels" aria-label="通知渠道"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M3.5 7h17M3.5 17h17"/><circle cx="9" cy="7" r="2" fill="white"/><circle cx="16" cy="17" r="2" fill="white"/></svg></span><span class="nav-text">通知渠道</span></a>
-        <a class="nav-link" href="#ai-settings" aria-label="AI 设置"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8L12 2Z"/><path d="m19 17 .6 2.4L22 20l-2.4.6L19 23l-.6-2.4L16 20l2.4-.6L19 17Z"/></svg></span><span class="nav-text">AI 设置</span></a>
-        <a class="nav-link" href="#fetch-settings" aria-label="读取设置"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c4 4 4 12 0 16-4-4-4-12 0-16Z"/></svg></span><span class="nav-text">读取设置</span></a>
-        <a class="nav-link" href="#activity" aria-label="活动与日志"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg></span><span class="nav-text">活动与日志</span></a>
-        <a class="nav-link" href="#account" aria-label="账户安全"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.5-4 3-6 7-6s6.5 2 7 6"/></svg></span><span class="nav-text">账户安全</span></a>
-      </nav>
-      <div class="sidebar-bottom"><span class="live-dot"></span> 本地服务运行中 <span class="version">v1.0</span></div>
+  <div class="shell">
+    <aside class="topbar">
+      <div class="nav-inner">
+        <a class="brand" href="#/overview" aria-label="确定性工作流首页"><span class="brand-mark" aria-hidden="true">W</span><span>确定性工作流</span></a>
+        <nav aria-label="工作区">
+          <a href="#/overview">运行概况</a>
+          <a href="#/account-login">登录账户</a>
+          <a href="#/workflows">工作流仓库</a>
+          <a href="#/runs">执行记录</a>
+          <a href="#/config">站点与购买配置</a>
+        </nav>
+      </div>
     </aside>
 
-    <main id="top" class="main-content">
-      <header class="topbar"><span class="topbar-start"><button type="button" id="sidebar-visibility" class="sidebar-visibility" aria-controls="sidebar" aria-expanded="true" aria-label="隐藏导航" title="隐藏导航"><span class="menu-lines" aria-hidden="true"></span></button><span class="breadcrumb"><span class="breadcrumb-brand">Webhook Radar</span><span class="breadcrumb-separator">/</span> <span id="current-page-label">概览</span></span></span><span class="topbar-right"><span class="system-status"><span class="live-dot"></span> 系统在线</span> <span id="account-name"></span><button type="button" id="logout-button" class="text-button">退出</button></span></header>
-      <div class="page-inner">
-        <section id="overview" class="overview-page">
-        <div class="page-heading"><div><div class="eyebrow">WEBHOOK RADAR</div><h1>通知工作台</h1><p>创建监控与定时提醒，管理接收渠道，查看每一次发送。</p></div></div>
-
-        <section class="status-grid" aria-label="系统概况">
-          <div class="stat-card"><div class="stat-label">通知渠道 <span class="stat-icon">↗</span></div><div class="stat-value" id="channel-status">未连接</div><div class="stat-foot" id="channel-hint">填写 Webhook 地址后开始</div></div>
-          <div class="stat-card"><div class="stat-label">运行中的任务 <span class="stat-icon">◉</span></div><div class="stat-value" id="active-count">0</div><div class="stat-foot">监控与定时提醒</div></div>
-          <div class="stat-card"><div class="stat-label">已发送通知 <span class="stat-icon">↗</span></div><div class="stat-value" id="sent-count">0</div><div class="stat-foot">包含测试与手动发送</div></div>
-        </section>
-        <div class="overview-actions"><a href="#create"><span>开始使用</span><strong>创建监控或定时提醒 <span aria-hidden="true">↗</span></strong><small>用一句话描述需求，确认后再创建</small></a><a href="#channels"><span>通知准备</span><strong>管理通知渠道 <span aria-hidden="true">↗</span></strong><small>添加、测试和选择 Webhook</small></a></div>
-        <p class="overview-note">保持服务运行，监控和到期提醒才能持续发送；重启后会补发未完成的提醒。</p>
-        </section>
-
-        <div class="workspace-flow">
-<section id="create" class="workspace-section compose-card">
-              <div class="card-title-row"><div><div class="eyebrow">SMART MONITOR</div><h2 id="create-heading">描述你想关注的事</h2></div><div class="section-icon purple" aria-hidden="true">✦</div></div>
-              <p id="create-subtitle" class="section-subtitle">说出你想关注的事。AI 会先拟好方案，自动试跑；确认后开始监控或定时提醒。</p>
-<section id="revision-context" class="revision-context hidden" aria-label="正在修改的任务"><div><span>正在修改</span><strong id="revision-task-name"></strong><p>AI 对话只属于本次修改，确认后更新原任务。</p></div><button id="cancel-revision" class="button button-outline" type="button">取消修改</button></section>
-              <div class="monitor-type-options" aria-label="创建监控">
-                <button type="button" data-monitor-type="product_stock"><strong>商品库存</strong><span>有货时提醒我 · 默认30秒</span></button>
-                <button type="button" data-monitor-type="price_change"><strong>价格变化</strong><span>降价或低于目标价格</span></button>
-                <button type="button" data-monitor-type="webpage_change"><strong>网页变化</strong><span>关注内容有变化</span></button>
-                <button type="button" data-monitor-type="api_monitor"><strong>接口状态</strong><span>异常或恢复时提醒</span></button>
-              </div>
-              <form id="parse-form">
-                <label for="instruction" class="field-label">告诉我你希望发生什么</label>
-                <textarea id="instruction" rows="4" placeholder="例如：帮我监控这个商品什么时候有货；价格低于100通知我"></textarea>
-                <div class="source-optional"><label for="instruction-url" class="field-label">商品、网页或接口链接</label><input id="instruction-url" type="text" placeholder="粘贴商品、网页或接口链接" autocomplete="off"><section class="feature-panel advanced-source"><h3>其他来源 · 本机日志或 TCP</h3><p id="local-source-hint" class="field-help"></p></section></div>
-                <section id="create-source-settings" class="feature-panel advanced-source"><label class="field-label" for="create-proxy-mode">网络出口</label><select id="create-proxy-mode"><option value="default">账户默认出口</option><option value="direct">直接连接 · 跳过代理</option><option value="custom">独立代理 · 仅此任务</option></select><div id="create-proxy-address" class="hidden"><label class="field-label" for="create-source-proxy-id">选择已保存代理</label><select id="create-source-proxy-id"><option value="">手动填写</option></select><label class="field-label" for="create-source-proxy">此任务的代理地址</label><input id="create-source-proxy" type="password" autocomplete="new-password" spellcheck="false" placeholder="http://user:pass@host:port 或 ss://…"></div><p class="field-help">页面分析、验证和后续检测都使用此出口。每条监控可以设置不同代理。</p></section>
-                <div class="element-actions"><button type="button" class="button button-outline" id="create-pick-element">直接选择网页元素</button><span class="field-help">自动分析没有找到目标时，可以点选价格或库存区域。</span></div><div class="composer-bottom"><span id="ai-status">先生成方案，参数可以之后调整</span><button class="button button-primary" type="submit" id="parse-button"><span>生成方案</span><span>↗</span></button></div>
-              </form>
-              <p class="assistant-context-note">对话只保留在当前创建草稿中。每次发送原始需求、页面分析摘要、当前规则草稿和最近 6 条对话；创建、重新开始或退出后清空。</p>
-              <section id="assistant-dialog" class="assistant-dialog hidden" aria-label="AI 监控助手"><div class="assistant-dialog-head"><span class="assistant-avatar" aria-hidden="true">✦</span><div><strong id="assistant-title">AI 创建助手</strong><span id="assistant-phase" role="status">等待需求</span></div><button id="assistant-reset" class="mini-button assistant-reset" type="button">重新开始</button></div><div id="assistant-messages" class="assistant-messages" role="log" aria-live="polite"></div><form id="assistant-reply-form" class="assistant-reply-form"><label for="assistant-reply" class="field-label">继续聊，或告诉我想改哪里</label><div class="assistant-reply-row"><textarea id="assistant-reply" rows="2" maxlength="2000" placeholder="不确定也没关系，可以问我原因，或直接说出你的想法"></textarea><button type="submit" id="assistant-reply-button" class="button button-outline">发送消息</button></div></form></section>
-              <p id="source-check-result" class="source-check-result hidden" role="status"></p><div id="preview" class="preview hidden" aria-live="polite"></div><section id="create-inspection" class="inspection-region hidden"></section>
-            </section>
-
-<section id="monitors" class="workspace-section monitors-card"><div id="task-list-view">
-              <div class="task-page-heading"><div><div class="eyebrow">AUTOMATIONS</div><h2>任务与提醒</h2><p class="section-subtitle">查看任务状态，管理监控与定时提醒。</p></div><a class="button button-primary" href="#create">＋ 创建任务</a></div><div class="task-toolbar"><div id="task-filters" class="task-filters" role="group" aria-label="任务类型"><button type="button" data-task-filter="all" aria-pressed="true">全部任务 <span id="monitor-count">0 个任务</span></button><button type="button" data-task-filter="monitor" aria-pressed="false">监控任务</button><button type="button" data-task-filter="reminder" aria-pressed="false">定时提醒</button></div><input id="task-search" type="search" aria-label="搜索任务" placeholder="搜索任务名称或内容"></div>
-              <div id="monitor-list" class="monitor-list"></div><p id="task-no-results" class="hidden task-no-results" role="status">没有符合条件的任务。</p>
-            </div><section id="task-workspace" class="hidden" aria-label="编辑监控规则"><header class="task-editor-head"><button type="button" class="text-button" id="task-close">‹ 返回任务列表</button><h2 id="task-editor-title"></h2><p>全部设置集中在此，修改后保存。</p></header><div id="task-editor-body"></div><section id="task-inspection" class="inspection-region hidden"></section><footer class="task-editor-footer"><span id="task-save-status" role="status">修改后点击保存</span><button type="button" class="button button-primary" id="task-save" data-action="save-rule">保存修改</button></footer></section></section>
-
-<section id="notifications" class="workspace-section quick-card">
-              <div class="card-title-row"><div><div class="eyebrow">QUICK SEND</div><h2>快速发送</h2></div><div class="section-icon mint">↗</div></div>
-              <p class="section-subtitle">写好内容，立即推送到已连接的 Webhook。</p>
-              <form id="send-form" class="stacked-form">
-                <label for="send-title" class="field-label">通知标题</label><input id="send-title" type="text" maxlength="120" placeholder="例如：服务已上线" required>
-                <label for="send-message" class="field-label">通知内容</label><textarea id="send-message" rows="3" maxlength="2000" placeholder="写下要发送的消息..." required></textarea>
-                <div id="send-priority-wrap" class="hidden"><div class="field-label">ntfy 优先级</div><div id="send-priority-slot"></div></div>
-                <div class="field-label">发送到</div><div id="send-targets" class="target-options"></div>
-                <div class="form-actions"><button class="button button-dark" type="submit" id="send-button">发送通知 <span>↗</span></button></div>
-              </form>
-            </section>
-
-<section id="settings" class="workspace-section settings-card">
-              <div class="section-heading"><div><div class="eyebrow">PREFERENCES</div><h2 id="settings-page-title">通知渠道</h2><p id="settings-page-subtitle">管理 Webhook 接收地址与发送方式。</p></div></div>
-
-              <div class="settings-layout"><div class="stacked-form settings-content">
-                <section id="channels" class="settings-group"><div class="settings-group-head"><div><h3>接收地址</h3><p>添加和管理 Webhook 接收地址。</p></div><button type="button" id="add-webhook" class="button button-outline">添加渠道</button></div>
-                <div class="channel-table-wrap"><table class="channel-table"><thead><tr><th>名称</th><th>类型</th><th>状态</th><th>地址</th><th></th></tr></thead><tbody id="webhook-list"></tbody></table></div><div id="channel-empty" class="channel-empty hidden">还没有通知渠道。添加一个 Webhook 地址开始使用。</div><aside id="webhook-drawer" class="webhook-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="drawer-title"><div class="drawer-head"><div><span class="eyebrow">CHANNEL</span><h3 id="drawer-title">添加渠道</h3></div><button type="button" id="drawer-close" class="mini-button" aria-label="关闭编辑面板">关闭</button></div><div id="drawer-fields"></div><div class="drawer-actions"><button type="button" id="drawer-delete" class="mini-button danger hidden">删除渠道</button><button type="button" id="drawer-test" class="button button-outline">测试连接</button><button type="button" id="drawer-save" class="button button-dark">保存渠道</button></div></aside><div id="drawer-backdrop" class="drawer-backdrop hidden"></div>
-                <p class="field-help">最多可添加 20 个渠道。点击编辑可设置发送格式和渠道专属选项。</p>
-                </section>
-                <section id="ai-settings" class="ai-settings settings-group" aria-labelledby="ai-settings-title"><form id="settings-form" class="stacked-form" novalidate=""><div class="ai-settings-heading"><h3 id="ai-settings-title">AI 生成设置</h3><p>自然语言生成规则需要你的 OpenAI 兼容 Chat Completions API</p></div>
-                  <label for="ai-base-url" class="field-label">API 地址</label><input id="ai-base-url" type="url" placeholder="https://api.openai.com/v1" autocomplete="off">
-                  <label for="ai-model" class="field-label">模型名称</label><input id="ai-model" type="text" placeholder="填写兼容 Chat Completions 的模型名" autocomplete="off">
-                  <label for="ai-key-select" class="field-label">当前 API Key <span id="key-indicator" class="key-indicator"></span></label>
-                  <div class="ai-key-picker"><select id="ai-key-select" data-native-select disabled><option value="">尚未添加 API Key</option></select><button id="add-ai-key-button" type="button" class="button button-outline">添加 Key</button></div>
-                  <label for="ai-key-name" class="field-label">Key 名称</label><input id="ai-key-name" type="text" maxlength="80" placeholder="例如：个人账号、备用账号" autocomplete="off" disabled>
-                  <label for="ai-key" class="field-label">API Key</label><input id="ai-key" type="password" placeholder="点击添加 Key 后填写" autocomplete="new-password" spellcheck="false" disabled>
-                  <div class="ai-key-actions"><span class="field-help">可添加多个 Key，保存后使用当前选中项。已保存的 Key 不回显，留空保留；API 地址与模型共用。</span><button id="clear-ai-key-button" type="button" class="mini-button danger hidden">删除此 Key</button></div>
-                  <div class="ai-test-row"><button type="button" id="ai-test-button" class="button button-outline">测试 API 连接</button><span id="ai-test-result" aria-live="polite"></span></div><a id="ai-test-log" href="#activity" class="field-help hidden">查看连接日志 ↗</a>
-                <div class="settings-actions"><span id="settings-dirty" class="dirty-indicator" aria-live="polite"></span><button class="button button-dark" type="submit" id="save-button">保存 AI 设置</button></div>
-                </form></section>
-              </div></div>
-            </section>
-
-<section id="fetch-settings" class="workspace-section source-settings">
-  <div class="card-title-row"><div><div class="eyebrow">SOURCE ACCESS</div><h2>读取设置</h2></div></div>
-  <p class="section-subtitle">为当前账户选择监控网络出口。真实浏览器也跳盾时，可换用能够正常访问目标网站的代理。</p>
-  <form id="source-settings-form" class="stacked-form" novalidate>
-    <section class="source-settings-section"><h3>监控代理</h3><p class="field-help">HTTP 请求与浏览器使用同一个代理。仅影响网页和接口监控，不改变 AI、Webhook 或邮件的连接。</p>
-    <p class="field-help">节点密码不会回显。带插件的 SS 节点请使用现有客户端的 HTTP 代理端口。</p><p id="source-proxy-status" class="source-proxy-status" aria-live="polite"></p>
-    <p class="field-label">已保存代理</p>
-    <div id="source-proxy-list" class="proxy-profile-list" aria-label="已保存代理"></div>
-    <h3>添加代理</h3>
-    <label class="field-label" for="source-proxy-type">添加方式</label><select id="source-proxy-type"><option value="shadowsocks">Shadowsocks · 填写参数</option><option value="url">粘贴链接 / HTTP 代理</option></select>
-    <div id="source-ss-fields" class="source-ss-fields">
-      <label class="field-label" for="source-ss-method">加密方式</label><select id="source-ss-method" data-native-select><option value="aes-256-gcm">aes-256-gcm</option><option value="aes-128-gcm">aes-128-gcm</option><option value="chacha20-ietf-poly1305">chacha20-ietf-poly1305</option><option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option><option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option><option value="2022-blake3-chacha20-poly1305">2022-blake3-chacha20-poly1305</option><option value="aes-128-cfb">aes-128-cfb</option><option value="aes-192-cfb">aes-192-cfb</option><option value="aes-256-cfb">aes-256-cfb</option><option value="aes-128-ctr">aes-128-ctr</option><option value="aes-192-ctr">aes-192-ctr</option><option value="aes-256-ctr">aes-256-ctr</option><option value="rc4-md5">rc4-md5</option><option value="chacha20-ietf">chacha20-ietf</option></select>
-      <div class="source-ss-address"><div><label class="field-label" for="source-ss-server">服务器 IP / 域名</label><input id="source-ss-server" type="text" autocomplete="off" spellcheck="false" maxlength="253" placeholder="例如：203.0.113.10"></div><div><label class="field-label" for="source-ss-port">端口</label><input id="source-ss-port" type="number" inputmode="numeric" min="1" max="65535" step="1" placeholder="例如：8388"></div></div>
-      <label class="field-label" for="source-ss-password">密码 / 密钥</label><input id="source-ss-password" type="password" autocomplete="new-password" spellcheck="false" maxlength="1000" aria-describedby="source-ss-help" placeholder="填写服务器提供的密码">
-      <p id="source-ss-help" class="field-help">填写原始密码即可，程序自动生成连接配置。加密方式须与服务器一致。</p>
-    </div>
-    <div id="source-proxy-url-fields" class="hidden"><label class="field-label" for="source-proxy">代理地址或 SS 分享链接</label><input id="source-proxy" type="password" autocomplete="new-password" spellcheck="false" placeholder="粘贴 ss:// 节点或 http://主机:端口"></div>
-    <label class="field-label" for="source-proxy-name">代理名称（可选）</label><input id="source-proxy-name" type="text" maxlength="60" placeholder="留空时使用服务器地址">
-    <p class="field-help">参数填好后可直接测试或保存，无需手动拼接链接。保存时会先验证连接；可保存多条代理，在列表或监控中选择。</p>
-    <div class="settings-actions source-proxy-actions"><button id="source-proxy-clear" type="button" class="button button-outline danger hidden">恢复直接连接</button><button id="source-proxy-test" type="button" class="button button-outline">测试代理</button><button id="source-proxy-add" type="button" class="button button-primary">添加代理</button><button id="source-proxy-save" type="submit" class="button button-outline">添加并设为默认</button></div>
-    <p id="source-connection-result" class="field-help" role="status"></p>
-    </section>
-  </form>
-  <form id="source-target-form" class="stacked-form source-target-section" novalidate="">
-    <section class="source-settings-section"><h3>测试目标网站</h3><p class="field-help">可选：测试当前输入或已保存代理能否读取指定网站。代理连接正常也可能遇到网站限制；此测试不会发送通知，也不会调用 AI。</p>
-    <label class="field-label" for="source-test-url">网站或接口地址</label><input id="source-test-url" type="url" placeholder="https://example.com/api/products">
-    <label class="field-label" for="source-test-mode">测试方式</label><select id="source-test-mode"><option value="http">直接请求</option><option value="browser">浏览器读取</option></select>
-    <div class="source-test-actions"><button id="source-target-test" class="button button-outline" type="submit">测试读取</button><p id="source-proxy-result" class="field-help" role="status"></p></div>
-    </section>
-  </form>
-</section>
-
-<section id="account" class="workspace-section account-card"><div class="card-title-row"><div><div class="eyebrow">ACCOUNT</div><h2>账户与安全</h2></div><div class="section-icon purple">◉</div></div><p class="section-subtitle">管理邮箱、密码和找回密码所需的恢复码。</p><div class="feature-tabs" role="tablist" aria-label="账户功能"><button type="button" role="tab" id="account-tab-0" aria-controls="account-panel-0" aria-selected="true" tabindex="0" data-feature-tab>绑定邮箱</button><button type="button" role="tab" id="account-tab-1" aria-controls="account-panel-1" aria-selected="false" tabindex="-1" data-feature-tab>修改密码</button><button type="button" role="tab" id="account-tab-2" aria-controls="account-panel-2" aria-selected="false" tabindex="-1" data-feature-tab>恢复码</button></div><section class="account-detail feature-tab-panel " id="account-panel-0" role="tabpanel" aria-labelledby="account-tab-0"><h3>绑定邮箱</h3><p class="field-help" id="email-status"></p><p class="field-help hidden" id="email-service-note">管理员尚未配置邮件服务，暂时无法绑定邮箱；找回密码仍可使用恢复码。</p><form id="email-form" class="stacked-form"><label class="field-label" for="account-email">邮箱地址</label><input id="account-email" type="email" autocomplete="email"><label class="field-label" for="email-password">当前密码</label><input id="email-password" type="password" required autocomplete="current-password"><label class="field-label" for="account-email-code">邮箱验证码</label><div class="code-send-row"><input id="account-email-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="6 位验证码"><button id="send-bind-code" class="mini-button" type="button">发送验证码</button></div><p id="bind-code-status" class="field-help" aria-live="polite">修改邮箱需验证新地址；留空邮箱可解除绑定。</p><button class="button button-dark" type="submit">保存邮箱</button></form></section><section class="account-detail feature-tab-panel hidden" id="account-panel-1" role="tabpanel" aria-labelledby="account-tab-1"><h3>修改密码</h3><form id="password-form" class="stacked-form"><label class="field-label" for="current-password">当前密码</label><input id="current-password" type="password" required autocomplete="current-password"><label class="field-label" for="new-password">新密码（至少 12 位）</label><input id="new-password" type="password" required minlength="12" maxlength="128" autocomplete="new-password"><button class="button button-dark" type="submit">修改密码</button></form></section><section class="account-detail feature-tab-panel hidden" id="account-panel-2" role="tabpanel" aria-labelledby="account-tab-2"><h3>恢复码</h3><p class="field-help" id="recovery-code-status"></p><form id="rotate-code-form" class="stacked-form"><label class="field-label" for="rotate-code-password">当前密码</label><input id="rotate-code-password" type="password" required autocomplete="current-password"><button class="button button-dark" type="submit">生成新恢复码</button></form></section></section>
-
-<section id="activity" class="workspace-section activity-card"><div class="card-title-row"><div><div class="eyebrow">ACTIVITY</div><h2>最近活动</h2></div><div class="section-icon mint" aria-hidden="true">↗</div></div><div id="activity-list" class="activity-list"></div><section class="log-panel"><h3>解析、检查与发送日志</h3><div class="log-toolbar"><label><input id="log-errors-only" type="checkbox"> 仅看失败</label><span id="log-count"></span></div><div id="log-list" class="log-list"></div></section><section id="activity-inspection" class="inspection-region hidden"></section></section>
-
-
+    <main>
+      <div class="workspace-bar"><p id="page-context" class="eyebrow" hidden></p><span id="connection" class="badge connection-badge">连接中</span></div>
+      <section data-page id="overview" class="overview-layout" aria-label="运行概况">
+        <header class="hero">
+          <div>
+            <p class="eyebrow">WORKFLOW OPERATIONS</p>
+            <h1>让成功的流程，<br class="mobile-break"><span class="headline-finish">重复成功。</span></h1>
+            <p class="hero-description">学习、验证、发布，再交给确定性引擎执行。</p>
+            <div class="hero-actions">
+              <a class="button" href="#/workflows">管理工作流<span aria-hidden="true">→</span></a>
+              <a class="button secondary" href="#/runs">查看执行记录</a>
+            </div>
+            <ol class="workflow-stages" aria-label="工作流生命周期">
+              <li><span>01 / LEARN</span><strong>学习</strong><small>记录真实步骤</small></li>
+              <li><span>02 / VERIFY</span><strong>验证</strong><small>验证后再发布</small></li>
+              <li><span>03 / EXECUTE</span><strong>执行</strong><small>按流程执行</small></li>
+            </ol>
+          </div>
+        </header>
+        <div class="overview-summary">
+          <div class="overview-console">
+            <div class="summary-header">
+              <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span>运行概况</span><small>每 5 秒更新</small>
+            </div>
+            <div class="metrics">
+              <article>
+                <span>浏览器会话</span>
+                <strong id="browser">未启动</strong>
+                <button id="warm" class="subtle">登录与预热</button>
+              </article>
+              <article>
+                <span>工作流版本</span>
+                <strong id="workflow-count">0</strong>
+                <small>每个版本独立验证</small>
+              </article>
+              <article>
+                <span>真实下单</span>
+                <strong id="success-count">0 / 0</strong>
+                <small>成功次数 / 实际执行次数</small>
+              </article>
+              <article>
+                <span>补货监控</span>
+                <strong id="monitor-state">已停止</strong>
+                <button id="stop" class="subtle">停止监控</button>
+              </article>
+            </div>
+          </div>
+          <div class="summary-links">
+            <a href="#/account-login">管理登录账户<span aria-hidden="true">›</span></a>
+            <a href="#/config">编辑站点配置<span aria-hidden="true">›</span></a>
+          </div>
         </div>
-        <footer>Webhook Radar <span>·</span> 简单、直接的通知工作台</footer>
-      </div>
+        <div class="overview-secondary">
+          <section class="dashboard-card" aria-labelledby="recent-heading">
+            <div class="overview-section-head"><h2 id="recent-heading">最近执行</h2><a href="#/runs">全部执行记录 <span aria-hidden="true">↗</span></a></div>
+            <div id="overview-run-list"></div>
+            <div id="overview-run-empty" class="preview-empty"><p>暂无执行记录</p><small>完成试运行后，可在这里查看结果。</small></div>
+          </section>
+          <section class="dashboard-card" aria-labelledby="library-heading">
+            <div class="overview-section-head"><h2 id="library-heading">工作流一览</h2><a href="#/workflows">全部工作流 <span aria-hidden="true">↗</span></a></div>
+            <div id="overview-workflow-list"></div>
+            <div id="overview-workflow-empty" class="preview-empty"><p>尚未导入工作流</p><small>导入本站点的学习记录，开始验证流程。</small></div>
+          </section>
+        </div>
+      </section>
+
+      <section data-page hidden id="account-login" class="panel">
+        <div class="account-intro">
+          <div class="section-head">
+            <div><p class="eyebrow">ACCOUNT SESSION</p><h2>登录账户</h2></div>
+          </div>
+          <span id="credential-state" class="badge">尚未保存</span>
+          <p id="account-scope" class="muted">先保存站点配置，再保存该站点的账号密码。</p>
+          <p class="muted">账号密码加密保存在本机，密码不会回显。登录失效时自动重登；登录步骤取自本站点学习资料。</p>
+        </div>
+        <div class="account-controls">
+          <div class="account-fields">
+            <label for="login-username">账号<input id="login-username" name="username" type="text" autocomplete="username"></label>
+            <label for="login-password">密码<input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="输入密码以保存或更新"></label>
+          </div>
+          <div class="actions account-actions">
+            <button id="save-login">保存并登录</button>
+            <button id="check-login" class="subtle">检测并重新登录</button>
+          </div>
+          <button id="delete-login" class="subtle">删除已保存账号</button>
+          <p id="login-health" class="muted"></p>
+        </div>
+      </section>
+
+      <section data-page hidden id="workflows" class="panel">
+        <div class="section-head">
+          <div><p class="eyebrow">VERSIONED REPOSITORY</p><h2>工作流仓库</h2></div>
+          <label class="file-button">导入学习记录<input id="import" type="file" accept=".json,application/json"></label>
+        </div>
+        <p class="muted">同一版本、同一参数连续两次试运行通过后可发布。真实下单会创建订单或账单；自动付款需在配置中明确选择。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>工作流 / 版本</th><th>状态</th><th>连续试跑</th><th>操作</th></tr></thead>
+            <tbody id="workflow-rows"></tbody>
+          </table>
+        </div>
+        <div id="workflow-pagination" class="pagination" aria-label="工作流分页" hidden>
+          <p id="workflow-page" aria-live="polite"></p>
+          <div class="actions"><button id="workflow-prev" class="subtle">上一页</button><button id="workflow-next" class="subtle">下一页</button></div>
+        </div>
+        <p id="workflow-empty" class="empty">导入从本站点实际操作中学到的工作流。</p>
+      </section>
+
+      <section data-page hidden id="runs" class="panel">
+        <div class="section-head">
+          <div><p class="eyebrow">VERIFIABLE EXECUTIONS</p><h2>执行记录</h2></div>
+        </div>
+        <div id="run-rows"></div>
+        <div id="runs-pagination" class="pagination" aria-label="执行记录分页" hidden>
+          <p id="runs-page" aria-live="polite"></p>
+          <div class="actions"><button id="runs-prev" class="subtle">上一页</button><button id="runs-next" class="subtle">下一页</button></div>
+        </div>
+        <p id="runs-empty" class="empty">执行记录会显示实际动作、后置验证和原始失败原因。</p>
+        <details><summary>监控与会话事件</summary><pre id="events">[]</pre></details>
+      </section>
+
+      <section data-page hidden id="config" class="panel">
+        <div class="section-head">
+          <div><p class="eyebrow">SITE LEARNING</p><h2>站点与购买配置</h2></div>
+          <button id="save">保存配置</button>
+        </div>
+        <p class="muted">填写实际站点的选择器、成功耗时样本和购买意图。账号密码可在「登录账户」中保存，也可通过环境变量提供。金额使用最小货币单位。</p>
+        <label for="config-json">配置 JSON</label>
+        <textarea id="config-json" spellcheck="false" placeholder="参见 examples/config.template.json"></textarea>
+      </section>
+
+      <footer>
+        <p>AI 在场外学习与修补，每次执行沿用已验证流程。</p>
+        <p>本机协作工作台 · 试运行不提交订单或付款 · 热路径推理调用数可审计</p>
+      </footer>
     </main>
   </div>
-
-
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="notice" role="status" aria-live="polite"></div>
+  <dialog id="run-detail">
+    <button id="close-detail" class="subtle">关闭</button>
+    <h2>执行详情</h2>
+    <pre id="detail"></pre>
+  </dialog>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

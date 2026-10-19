@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "id": "whmcs-product-5",
+  "provenance": {
+    "kind": "site-recording",
+    "source": "填写本站点成功操作记录的路径"
+  },
+  "couponPolicy": "remove-and-continue",
+  "steps": [
+    {
+      "id": "catalog",
+      "action": "navigate",
+      "url": "https://merchant.example/cart.php?gid=5",
+      "pre": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "post": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "timing": {
+        "order": {
+          "samplesMs": [],
+          "marginMs": 0,
+          "idleMs": 0
+        }
+      }
+    },
+    {
+      "id": "cart",
+      "action": "cart",
+      "target": {
+        "selector": ""
+      },
+      "request": {
+        "operation": "cart",
+        "method": "GET",
+        "path": "/cart.php",
+        "query": {
+          "a": "add",
+          "pid": "5"
+        }
+      },
+      "pre": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "post": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "timing": {
+        "order": {
+          "samplesMs": [],
+          "marginMs": 0,
+          "idleMs": 0
+        }
+      }
+    },
+    {
+      "id": "submit",
+      "action": "submit",
+      "target": {
+        "selector": ""
+      },
+      "request": {
+        "operation": "submit",
+        "method": "POST",
+        "path": "/cart.php",
+        "query": {
+          "a": "checkout"
+        }
+      },
+      "pre": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "post": [
+        {
+          "kind": "visible",
+          "selector": ""
+        }
+      ],
+      "timing": {
+        "order": {
+          "samplesMs": [],
+          "marginMs": 0,
+          "idleMs": 0
+        }
+      }
+    }
+  ]
+}

@@ -1,20 +1,19 @@
 {
-  "name": "webhook-radar",
-  "version": "1.0.0",
+  "name": "browser-workflow",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test",
-    "diagnostics": "node lib/diagnostics.js"
+    "cli": "node src/cli.js",
+    "test": "node --test test/*.test.js",
+    "test:safety": "node --test test/safety.test.js test/gate.test.js",
+    "test:browser": "node --test test/engine.test.js test/monitor.test.js test/ui.test.js"
   },
   "engines": {
-    "node": ">=20.18.1"
+    "node": ">=24.0.0"
   },
   "dependencies": {
-    "cheerio": "1.1.2",
-    "playwright-core": "1.63.0",
-    "quickjs-emscripten": "0.32.0",
-    "undici": "6.29.0"
+    "playwright-core": "1.63.0"
   }
 }

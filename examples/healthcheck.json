@@ -1,0 +1,12 @@
+{
+  "host": "192.0.2.10",
+  "user": "root",
+  "port": 22,
+  "identityFile": "/path/to/private-key",
+  "checks": [
+    "cpu",
+    "io",
+    "network",
+    "route"
+  ]
+}
