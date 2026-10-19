@@ -23,7 +23,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: node node_modules/playwright-core/cli.js install --with-deps chromium
       - run: npm run test:safety
-      - run: npm test
+      - run: node --test --test-concurrency=1 test/*.test.js
       - run: docker compose config -q
       - run: docker compose -f compose.build.yaml config -q
       - run: bash -n install.sh
