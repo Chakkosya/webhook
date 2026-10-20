@@ -56,8 +56,12 @@ function renderProxies() {
 }
 function renderMonitors() {
   const items=latest.monitors,list=ui.$('#monitor-list'),pages=Math.max(1,Math.ceil(items.length/10));
+  monitorPage=Math.min(monitorPage,pages);
+  const signature=JSON.stringify([items,monitorPage,latest.profiles.proxies,!ui.$('#monitor-builder').hidden]);
+  if(signature===renderMonitors.signature)return;
+  renderMonitors.signature=signature;
   const expanded=new Set([...list.querySelectorAll('.monitor-card')].filter(card=>card.querySelector('details')?.open).map(card=>card.dataset.id));
-  monitorPage=Math.min(monitorPage,pages);list.replaceChildren();
+  list.replaceChildren();
   ui.$('#monitor-onboarding').hidden=!!items.length||!ui.$('#monitor-builder').hidden;ui.$('#monitor-list-pagination').hidden=pages===1;
   ui.$('#monitor-list-page').textContent='第 '+monitorPage+' / '+pages+' 页 · 共 '+items.length+' 个监控';
   ui.$('#monitor-list-prev').disabled=monitorPage===1;ui.$('#monitor-list-next').disabled=monitorPage===pages;

@@ -66,7 +66,10 @@ test('users add API providers and SS exits, test an HTTP route, and create a mon
     await page.locator('#cancel-proxy').click();
     await page.locator('nav').getByRole('link',{name:'监控任务',exact:true}).click();
     site.state.quantity=2;
+    const checkResponse=page.waitForResponse(response=>response.url().endsWith('/api/monitors/check'));
     await page.locator('#monitor-list').getByRole('button',{name:'立即检查',exact:true}).click();
+    const checked=await(await checkResponse).json();
+    assert.equal(checked.status,'matched',JSON.stringify(checked));
     await page.waitForFunction(()=>document.querySelector('#monitor-list').textContent.includes('已提醒 1 次'));
     assert.equal(site.state.aiCalls,before+1);assert.equal(site.state.writes,0);
     await page.locator('#monitor-list').getByRole('button',{name:'暂停',exact:true}).click();
