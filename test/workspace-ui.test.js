@@ -71,6 +71,9 @@ test('users add API providers and SS exits, test an HTTP route, and create a mon
     assert.equal(site.state.aiCalls,before+1);assert.equal(site.state.writes,0);
     await page.locator('#monitor-list').getByRole('button',{name:'暂停',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#monitor-list').textContent.includes('已暂停'));
+    await page.locator('#monitor-list summary').click();
+    await page.waitForResponse(response=>response.url().endsWith('/api/status')&&response.ok());
+    assert.equal(await page.locator('#monitor-list details').evaluate(element=>element.open),true);
     await page.locator('#new-monitor').click();await page.locator('#monitor-url').fill(site.origin);
     const output=resolve('release/ui');await mkdir(output,{recursive:true});
     for(const width of [1440,390,320]) {

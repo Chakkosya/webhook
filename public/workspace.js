@@ -56,6 +56,7 @@ function renderProxies() {
 }
 function renderMonitors() {
   const items=latest.monitors,list=ui.$('#monitor-list'),pages=Math.max(1,Math.ceil(items.length/10));
+  const expanded=new Set([...list.querySelectorAll('.monitor-card')].filter(card=>card.querySelector('details')?.open).map(card=>card.dataset.id));
   monitorPage=Math.min(monitorPage,pages);list.replaceChildren();
   ui.$('#monitor-onboarding').hidden=!!items.length||!ui.$('#monitor-builder').hidden;ui.$('#monitor-list-pagination').hidden=pages===1;
   ui.$('#monitor-list-page').textContent='第 '+monitorPage+' / '+pages+' 页 · 共 '+items.length+' 个监控';
@@ -71,6 +72,7 @@ function renderMonitors() {
     actions.append(ui.button(item.running?'暂停':'启动',async()=>{await ui.api(item.running?'monitors/stop':'monitors/start',{id:item.id});ui.notice(item.running?'监控已暂停':'监控已启动');}));
     if(item.running)actions.append(ui.button('立即检查',async()=>{const result=await ui.api('monitors/check',{id:item.id});ui.notice(stateLabel(result.status)+(result.reason?'：'+result.reason:''));}));
     actions.append(ui.button('重新配置',async()=>{if(item.running)await ui.api('monitors/stop',{id:item.id});openBuilder(item);}),ui.button('删除',async()=>{await ui.api('monitors/delete',{id:item.id});if(monitorEdit===item.id){preview=null;ui.$('#monitor-builder').hidden=true;}ui.notice('监控已删除');}));
+    details.open=expanded.has(item.id);
     details.append(ui.node('summary','监控详情与提醒'));
     details.append(ui.node('p',item.explanation),ui.node('p','实际页面验证 '+item.verifiedChecks+' 次 · 日常检查推理调用 '+item.aiInferenceCalls+' 次'));
     if(item.lastResult?.at)details.append(ui.node('p','最近检查 · '+ui.time(item.lastResult.at)));
