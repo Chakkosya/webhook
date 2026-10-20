@@ -1,4 +1,4 @@
-let ui,latest={monitors:[],profiles:{apis:[],proxies:[]}},apiEdit=null,proxyEdit=null,monitorEdit=null,preview=null,monitorPage=1,sessionTouched=false;
+let ui,latest={monitors:[],profiles:{apis:[],proxies:[]}},apiEdit=null,proxyEdit=null,monitorEdit=null,preview=null,monitorPage=1,sessionTouched=false,accountEdit=null;
 const prompts={stock:'关注这款商品，有可购买库存时提醒我。',price:'当这款商品的价格低于 100 时提醒我。',change:'关注页面的主要内容，内容更新后提醒我。',text:'当页面出现「开放购买」时提醒我。'};
 const stateLabel=value=>({matched:'条件命中',clear:'条件尚未命中',unknown:'暂时无法确认'})[value]||'等待首次检查';
 function feedback(id,text,error=false){const el=ui.$(id);el.textContent=text;el.dataset.error=String(error);}
@@ -20,13 +20,14 @@ function resetProxy() {
   proxyEdit=null;ui.$('#proxy-form').reset();ui.$('#proxy-manual').hidden=true;ui.$('#proxy-link-field').hidden=false;ui.$('#proxy-form-title').textContent='添加网络出口';ui.$('#proxy-url').placeholder='ss://… 或 http://…';ui.$('#cancel-proxy').hidden=true;
 }
 function openBuilder(record) {
-  monitorEdit=record?.id||null;preview=null;ui.$('#monitor-form').reset();ui.$('#monitor-preview').hidden=true;ui.$('#monitor-builder').hidden=false;ui.$('#monitor-onboarding').hidden=true;
+  monitorEdit=record?.id||null;preview=null;accountEdit=null;ui.$('#task-account-form').hidden=true;ui.$('#monitor-form').reset();ui.$('#monitor-preview').hidden=true;ui.$('#monitor-builder').hidden=false;ui.$('#monitor-onboarding').hidden=true;
   ui.$('#builder-title').textContent=record?'重新配置监控':'创建智能监控';
   feedback('#monitor-feedback','');
   if(record) {
     for(const [id,value] of Object.entries({'monitor-url':record.url,'monitor-kind':record.kind,'monitor-name':record.name,'monitor-requirement':record.requirement,'monitor-api':record.apiId||'','monitor-proxy':record.proxyId||'','monitor-interval':record.intervalMs/1000}))ui.$('#'+id).value=value;
     ui.$('#monitor-webhook').placeholder=record.hasWebhook?'已保存通知地址；留空保留':'https://…';
   }
+  renderAccounts();builderTab('rules');
   ui.$('#monitor-builder').scrollIntoView({block:'start',behavior:'smooth'});
 }
 function renderApis() {
@@ -75,13 +76,40 @@ function renderMonitors() {
     card.append(ui.node('p',route+' · 每 '+item.intervalMs/1000+' 秒 · 已提醒 '+(item.notificationCount||0)+' 次','muted'));
     actions.append(ui.button(item.running?'暂停':'启动',async()=>{await ui.api(item.running?'monitors/stop':'monitors/start',{id:item.id});ui.notice(item.running?'监控已暂停':'监控已启动');}));
     if(item.running)actions.append(ui.button('立即检查',async()=>{const result=await ui.api('monitors/check',{id:item.id});ui.notice(stateLabel(result.status)+(result.reason?'：'+result.reason:''));}));
-    actions.append(ui.button('重新配置',async()=>{if(item.running)await ui.api('monitors/stop',{id:item.id});openBuilder(item);}),ui.button('删除',async()=>{await ui.api('monitors/delete',{id:item.id});if(monitorEdit===item.id){preview=null;ui.$('#monitor-builder').hidden=true;}ui.notice('监控已删除');}));
+    actions.append(ui.button('管理账户',async()=>{if(item.running)await ui.api('monitors/stop',{id:item.id});openBuilder(item);builderTab('accounts');ui.$('#task-accounts-title').scrollIntoView({block:'center',behavior:'smooth'});}),ui.button('重新配置',async()=>{if(item.running)await ui.api('monitors/stop',{id:item.id});openBuilder(item);}),ui.button('删除',async()=>{await ui.api('monitors/delete',{id:item.id});if(monitorEdit===item.id){preview=null;ui.$('#monitor-builder').hidden=true;}ui.notice('监控已删除');}));
     details.open=expanded.has(item.id);
     details.append(ui.node('summary','监控详情与提醒'));
+    for(const result of item.lastResult?.accounts||[])details.append(ui.node('p',result.accountName+' · '+stateLabel(result.status)+' · '+(result.value||result.reason||'')));
     details.append(ui.node('p',item.explanation),ui.node('p','实际页面验证 '+item.verifiedChecks+' 次 · 日常检查推理调用 '+item.aiInferenceCalls+' 次'));
     if(item.lastResult?.at)details.append(ui.node('p','最近检查 · '+ui.time(item.lastResult.at)));
     for(const notification of item.notifications||[])details.append(ui.node('p',ui.time(notification.at)+' · '+(notification.status==='failed'?'通知发送失败：'+notification.error:'已记录提醒')+' · '+notification.value));
     card.append(actions,details);list.append(card);
+  }
+}
+function builderTab(name){
+  const accounts=name==='accounts';ui.$('#monitor-form').hidden=accounts;ui.$('#task-accounts').hidden=!accounts;
+  ui.$('#builder-rules-tab').setAttribute('aria-selected',String(!accounts));ui.$('#builder-accounts-tab').setAttribute('aria-selected',String(accounts));
+}
+function renderAccounts(){
+  if(!ui)return;
+  const record=latest.monitors.find(item=>item.id===monitorEdit),accounts=record?.accounts||[];
+  const list=ui.$('#task-account-list'),signature=JSON.stringify([monitorEdit,accounts]);
+  if(list.dataset.signature===signature)return;list.dataset.signature=signature;list.replaceChildren();ui.$('#task-account-empty').hidden=!!accounts.length;
+  for(const account of accounts){
+    const row=ui.node('div',undefined,'task-account-row'),label=ui.node('label',undefined,'check-label'),check=ui.node('input'),content=ui.node('div'),actions=ui.node('div',undefined,'actions');
+    check.type='checkbox';check.checked=account.selected;check.setAttribute('aria-label','使用账户 '+account.name);
+    check.onchange=async()=>{
+      check.disabled=true;
+      try{await ui.api('monitors/accounts/select',{monitorId:monitorEdit,id:account.id,selected:check.checked});preview=null;ui.$('#monitor-preview').hidden=true;await ui.refresh();}
+      catch(error){ui.notice(error.message);check.checked=!check.checked;}finally{check.disabled=false;}
+    };
+    label.append(check,ui.node('strong',account.name));
+    content.append(label,ui.node('p',account.username+' · '+({ready:'登录正常',failed:'登录失败',rejected:'账号被拒绝',uncertain:'需手动确认',unchecked:'待验证'})[account.health?.status] ,'muted'));
+    if(account.health?.message)content.append(ui.node('p',account.health.message,'form-feedback'));
+    actions.append(ui.button('检测登录',async()=>{feedback('#task-account-feedback','正在打开商家页面并检测登录…');try{await ui.api('monitors/accounts/check',{monitorId:monitorEdit,id:account.id});feedback('#task-account-feedback','登录已确认。');}catch(error){feedback('#task-account-feedback',error.message,true);throw error;}}),
+      ui.button('编辑',()=>{accountEdit=account.id;ui.$('#task-account-name').value=account.name;ui.$('#task-account-url').value=account.loginUrl;ui.$('#task-account-username').value=account.username;ui.$('#task-account-password').value='';ui.$('#task-account-password').required=false;ui.$('#task-account-password').placeholder='留空保留原密码';ui.$('#task-account-form').hidden=false;}),
+      ui.button('删除',async()=>{await ui.api('monitors/accounts/delete',{monitorId:monitorEdit,id:account.id});preview=null;ui.$('#monitor-preview').hidden=true;ui.notice('任务账户已删除');}));
+    row.append(content,actions);list.append(row);
   }
 }
 export function refreshWorkspace(status) {
@@ -93,9 +121,12 @@ export function refreshWorkspace(status) {
   const signature=JSON.stringify(latest.profiles);
   if(signature!==refreshWorkspace.signature){renderApis();renderProxies();refreshWorkspace.signature=signature;}
   renderMonitors();
+  renderAccounts();
 }
 export function setupWorkspace(helpers) {
   ui=helpers;
+  ui.$('#builder-rules-tab').onclick=()=>builderTab('rules');ui.$('#builder-accounts-tab').onclick=()=>builderTab('accounts');
+  ui.$('#analyze-monitor').onclick=()=>{builderTab('rules');ui.$('#monitor-form').requestSubmit();};
   ui.$('#api-tab').onclick=()=>tab('api');ui.$('#proxy-tab').onclick=()=>tab('proxy');
   ui.$('#cancel-api').onclick=resetApi;ui.$('#cancel-proxy').onclick=resetProxy;
   ui.$('#proxy-mode').onchange=()=>{const manual=ui.$('#proxy-mode').value==='manual';ui.$('#proxy-manual').hidden=!manual;ui.$('#proxy-link-field').hidden=manual;};
@@ -114,6 +145,24 @@ export function setupWorkspace(helpers) {
       else input.url=ui.$('#proxy-url').value;
       await ui.api('proxies/save',input);resetProxy();feedback('#proxy-feedback','出口已保存，可以测试连接或在创建监控时选用。');await ui.refresh();
     }catch(error){feedback('#proxy-feedback',error.message,true);}finally{button.disabled=false;}
+  };
+  ui.$('#add-task-account').onclick=()=>{
+    accountEdit=null;ui.$('#task-account-form').reset();ui.$('#task-account-form').hidden=false;ui.$('#task-account-password').required=true;
+    try{ui.$('#task-account-url').value=new URL('/login',ui.$('#monitor-url').value).href;}catch{}
+    ui.$('#task-account-name').focus();
+  };
+  ui.$('#cancel-task-account').onclick=()=>{ui.$('#task-account-form').hidden=true;ui.$('#task-account-password').value='';};
+  ui.$('#task-account-form').onsubmit=async event=>{
+    event.preventDefault();const button=ui.$('#save-task-account');button.disabled=true;
+    try{
+      if(!ui.$('#monitor-url').value){builderTab('rules');ui.$('#monitor-url').reportValidity();throw new Error('请先填写监控网页');}
+      if(!monitorEdit){
+        const draft=await ui.api('monitors/draft',{url:ui.$('#monitor-url').value,name:ui.$('#monitor-name').value,kind:ui.$('#monitor-kind').value});monitorEdit=draft.id;
+      }
+      await ui.api('monitors/accounts/save',{monitorId:monitorEdit,id:accountEdit,name:ui.$('#task-account-name').value,loginUrl:ui.$('#task-account-url').value,username:ui.$('#task-account-username').value,password:ui.$('#task-account-password').value,selected:true});
+      ui.$('#task-account-password').value='';ui.$('#task-account-form').hidden=true;preview=null;ui.$('#monitor-preview').hidden=true;
+      feedback('#task-account-feedback','账户已加密保存。可继续添加账户，或分析页面验证所选账户。');await ui.refresh();
+    }catch(error){feedback('#task-account-feedback',error.message,true);}finally{button.disabled=false;}
   };
   ui.$('#new-monitor').onclick=()=>openBuilder();ui.$('#close-builder').onclick=()=>{ui.$('#monitor-builder').hidden=true;renderMonitors();};
   ui.$('.hero-actions a[href="#/monitors"]').addEventListener('click',()=>openBuilder());

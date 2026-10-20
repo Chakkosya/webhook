@@ -5,6 +5,7 @@ import {browserExecutable} from './session.js';
 import {openProxy} from './proxy.js';
 import {Progress,perform,until} from './wait.js';
 import {fail} from '../errors.js';
+import {authenticated,loginAccount} from './account-login.js';
 const bootstrap={absoluteMs:180000,idleMs:45000};
 function actionUrl(url) {
   const value=new URL(url);
@@ -16,7 +17,7 @@ export function monitorUrl(value) {
   return url.href;
 }
 export class ObservationBrowser {
-  constructor({dataDir,id,profile,headless=true}){Object.assign(this,{dataDir,id,profile,headless});}
+  constructor({dataDir,id,profile,headless=true,account,onAccount}){Object.assign(this,{dataDir,id,profile,headless,account,onAccount});}
   async open() {
     this.route=await openProxy(this.profile);
     try {
@@ -24,17 +25,19 @@ export class ObservationBrowser {
       this.context=await chromium.launchPersistentContext(directory,{headless:this.headless,executablePath:await browserExecutable(process.env.BROWSER_EXECUTABLE),proxy:this.route.proxy,args:this.route.proxy?['--proxy-bypass-list=<-loopback>']:[],serviceWorkers:'block',viewport:{width:1280,height:900}});
       await this.context.route('**/*',async route=>{
         const request=route.request(),url=new URL(request.url());
+        if(this.authPermit&&request.url()===this.authPermit.url&&request.method()===this.authPermit.method&&request.postData()===this.authPermit.body){const permit=this.authPermit;this.authPermit=null;this.authSent=true;permit.onSent();return route.continue();}
         const challenge=url.pathname.startsWith('/cdn-cgi/challenge-platform/');
         if(!challenge&&(!['GET','HEAD'].includes(request.method())||actionUrl(url)))return route.abort('blockedbyclient');
         return route.continue();
       });
       this.page=this.context.pages()[0]||await this.context.newPage();
+      if(this.account&&!this.account.recipe){const client=await this.context.newCDPSession(this.page);try{await client.send('Storage.clearDataForOrigin',{origin:new URL(this.account.loginUrl).origin,storageTypes:'all'});}finally{await client.detach();}}
       this.page.on('response',response=>{if(response.request().isNavigationRequest()&&response.frame()===this.page.mainFrame())this.documentStatus=response.status();});
       this.progress=new Progress(this.page);await this.progress.connect();
       return this;
     } catch(error){await this.close();throw error;}
   }
-  async read(url,policy=bootstrap) {
+  async navigate(url,policy=bootstrap) {
     url=monitorUrl(url);const started=Date.now();this.progress.touch();
     await perform(()=>this.page.goto(url,{waitUntil:'domcontentloaded',timeout:policy.absoluteMs}),policy,this.progress);
     const remaining={...policy,absoluteMs:Math.max(1,policy.absoluteMs-(Date.now()-started))};
@@ -46,6 +49,17 @@ export class ObservationBrowser {
       return ready&&this.progress.active===0&&Date.now()-this.progress.last>=400;
     },remaining,this.progress);
     if(this.documentStatus>=400)fail('NETWORK','监控页面返回 HTTP '+this.documentStatus);
+    return Date.now()-started;
+  }
+  async read(url,policy=bootstrap) {
+    const started=Date.now();
+    await this.navigate(url,policy);
+    if(this.account&&!await authenticated(this,this.account.recipe)){
+      await loginAccount(this);
+      await this.navigate(url,policy);
+      if(!await authenticated(this,this.account.recipe))fail('SESSION','监控页面未确认登录状态，不执行规则判断');
+    }
+    if(this.account&&this.account.health?.status!=='ready'){const health={status:'ready',at:new Date().toISOString()};this.account={...this.account,health};this.onAccount?.({health});}
     return Date.now()-started;
   }
   async snapshot() {

@@ -1,3 +1,4 @@
+import {loginPage} from './helpers/auth.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -24,7 +25,8 @@ test('users add API providers and SS exits, test an HTTP route, and create a mon
   try {
     const page=await browser.newPage({viewport:{width:1440,height:1100}}),errors=[];
     page.on('pageerror',error=>errors.push(error.message));
-    await page.goto('http://127.0.0.1:'+app.server.address().port);
+    await loginPage(page,app);
+  await page.goto('http://127.0.0.1:'+app.server.address().port);
     await page.waitForFunction(()=>document.querySelector('#connection').textContent==='本机已连接');
     await page.getByRole('link',{name:'添加 API 与出口',exact:true}).click();
     await page.locator('#api-name').fill('常用 API');await page.locator('#api-endpoint').fill(site.origin+'/v1');await page.locator('#api-key').fill('fixture-private-ui-key');await page.locator('#api-model').fill('fixture-model');

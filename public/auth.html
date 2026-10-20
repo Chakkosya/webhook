@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#eef2f7"><title>Sign In · 确定性工作流</title><link rel="stylesheet" href="/style.css"></head>
+<body class="auth-body">
+<header class="topbar auth-topbar"><div class="nav-inner"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span><span>确定性工作流</span></a><div class="auth-actions"><a href="/signin" id="signin-link">Sign In</a><a class="button secondary" href="/signup" id="signup-link">Sign Up</a></div></div></header>
+<main class="auth-main">
+ <div class="auth-story"><p class="eyebrow">YOUR PERSONAL WATCHSPACE</p><h1>留意变化，<br><span class="headline-finish">轻松一点。</span></h1><p>登录你的工作台，管理监控、账号与提醒。</p><div class="auth-illustration" aria-hidden="true"><div class="glass-orbit"></div><div class="glass-window"><span class="window-dots"><i></i><i></i><i></i></span><p>WATCHING FOR YOU</p><div class="glass-line"></div><div class="glass-line short"></div><span class="badge">一切尽在关注</span></div></div></div>
+ <section class="panel auth-card"><p class="eyebrow" id="auth-eyebrow">WELCOME BACK</p><h2 id="auth-title">Sign In</h2><p id="auth-description" class="muted">登录工作台，继续你的监控。</p>
+  <form id="auth-form"><div class="field-stack">
+   <label>邮箱<input id="auth-email" type="email" autocomplete="username" placeholder="you@example.com" required></label>
+   <label>密码<input id="auth-password" type="password" autocomplete="current-password" placeholder="至少 8 个字符" minlength="8" maxlength="256" required></label>
+   <div id="verification-field" hidden><label for="auth-code">邮箱验证码</label><div class="verification-row"><input id="auth-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6 位验证码"><button type="button" id="send-code" class="subtle">发送验证码</button></div></div>
+  </div><button id="auth-submit" class="auth-submit" type="submit">Sign In <span aria-hidden="true">→</span></button></form>
+  <p id="auth-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+  <p class="auth-switch" id="auth-switch">还没有账号？ <a href="/signup">Sign Up</a></p>
+ </section>
+</main><footer class="auth-footer">你的监控任务与商家账号，保存在自己的工作空间。</footer>
+<script type="module" src="/auth.js"></script></body></html>

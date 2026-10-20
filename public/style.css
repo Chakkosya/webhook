@@ -396,3 +396,76 @@ h3 { font-size: 18px; line-height: 1.5; margin: 0 0 12px; font-weight: 600; lett
 .form-grid input::placeholder, .field-stack input::placeholder, .test-url-label input::placeholder { color: #94a3b6; }
 .form-grid input:focus, .field-stack input:focus, .test-url-label input:focus { border-color: #89b1dc; box-shadow: 0 0 0 3px rgb(66 130 199 / 8%); outline: none; }
 @media (max-width: 760px) { .form-grid input, .field-stack input, .test-url-label input, select { font-size: 16px; } }
+
+/* Website access */
+.user-actions, .auth-actions { display: flex; align-items: center; gap: 14px; margin-left: auto; flex-shrink: 0; }
+.user-actions a { display: block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; font-size: 11px; }
+.user-actions button { min-height: 32px; padding: 6px 10px; font-size: 11px; }
+.nav-inner { flex-wrap: wrap; }
+.nav-inner nav { order: 2; width: 100%; }
+.auth-actions a { font-size: 13px; text-decoration: none; }
+.auth-actions a[aria-current="page"] { color: #2377c7; }
+.auth-topbar .nav-inner { padding: 15px 24px; }
+.auth-main { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); align-items: center; gap: 80px; max-width: 1060px; min-height: calc(100dvh - 190px); padding: 55px 0; }
+.auth-story > p:not(.eyebrow) { font-size: 15px; color: var(--muted); line-height: 2; }
+.auth-story h1 { font-size: clamp(38px, 4.5vw, 58px); line-height: 1.25; letter-spacing: -2px; }
+.auth-card { margin: 0; padding: 42px; background: rgb(255 255 255 / 53%); }
+.auth-card h2 { font-size: 32px; letter-spacing: -1px; }
+.auth-card .field-stack { margin: 30px 0; }
+.auth-submit { width: 100%; justify-content: space-between; min-height: 48px; font-size: 14px; }
+.auth-switch { margin-top: 28px; font-size: 12px; color: var(--muted); }
+.auth-switch a { margin-left: 6px; text-decoration: none; }
+.verification-row { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+.verification-row input { width: 100%; min-width: 0; min-height: 46px; border: 1px solid var(--line); border-radius: 10px; background: rgb(255 255 255 / 76%); padding: 12px; color: var(--ink); font: inherit; }
+.verification-row button { flex-shrink: 0; min-height: 44px; }
+.auth-illustration { position: relative; height: 220px; margin-top: 38px; }
+.glass-orbit { position: absolute; width: 200px; height: 200px; border-radius: 50%; left: 130px; background: radial-gradient(circle at 30% 20%, #e0efff, #b0d4f3 55%, #e7f1fa); box-shadow: inset -12px -14px 25px rgb(255 255 255 / 40%), 0 20px 70px rgb(117 169 217 / 15%); }
+.glass-window { position: relative; top: 22px; padding: 26px; width: 260px; min-height: 180px; border-radius: 20px; border: 1px solid rgb(255 255 255 / 90%); background: rgb(255 255 255 / 45%); backdrop-filter: blur(20px); box-shadow: 0 24px 60px rgb(65 107 155 / 8%), inset 0 1px 0 #fff; }
+.glass-window p { color: #8aa2bb; font-size: 9px; letter-spacing: 2px; margin: 24px 0 14px; }
+.glass-line { height: 7px; border-radius: 5px; background: #d1e2f2; margin-bottom: 10px; }
+.glass-line.short { width: 65%; margin-bottom: 24px; }
+.auth-footer { max-width: 1060px; width: calc(100% - 56px); margin: 0 auto; text-align: center; padding: 16px 0; }
+.task-accounts { border-top: 1px solid var(--line); margin-top: 26px; padding-top: 26px; }
+.task-accounts .section-head { align-items: flex-start; margin-bottom: 20px; }
+.task-accounts h3 { font-size: 16px; }
+.task-accounts .muted { font-size: 12px; }
+.task-account-row { display: flex; gap: 20px; justify-content: space-between; align-items: center; padding: 18px 0; border-top: 1px solid var(--line); }
+.task-account-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.task-account-row .actions { margin-top: 0; gap: 6px; flex-shrink: 0; }
+.task-account-row button { font-size: 11px; padding: 8px 12px; }
+.check-label { display: flex !important; align-items: center; gap: 10px; line-height: 1.5; }
+.check-label input { display: inline-block; width: 16px; min-height: 16px; height: 16px; margin: 0; accent-color: #2785df; }
+#task-account-form { margin: 20px 0; padding: 22px; background: rgb(230 240 250 / 50%); border-radius: 14px; }
+.purchase-credentials { margin-top: 26px; }
+#account-login.purchase-account { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin: 24px 0 0; padding: 0; border: 0; background: transparent; box-shadow: none; }
+#mail-form { margin-top: 26px; }
+#mail-form .actions { margin-top: 24px; }
+@media (max-width: 760px) {
+ .user-actions { margin: 0 8px 8px auto; gap: 8px; }
+ .user-actions a { max-width: 105px; font-size: 10px; }
+ .user-actions button { font-size: 10px; padding-inline: 8px; }
+ .brand { margin-left: 6px; font-size: 14px; gap: 8px; }
+ .auth-topbar .nav-inner { flex-wrap: nowrap; gap: 10px; padding: 14px; }
+ .auth-topbar .brand { margin: 0; }
+ .auth-topbar .brand > span:last-child { font-size: 12px; }
+ .auth-actions { gap: 12px; }
+ .auth-actions a { font-size: 11px; }
+ .auth-actions .button { padding: 8px 12px; }
+ .auth-main { grid-template-columns: minmax(0, 1fr); max-width: 460px; gap: 22px; padding: 32px 0; min-height: auto; }
+ .auth-story { text-align: center; }
+ .auth-story h1 { font-size: 34px; letter-spacing: -1px; }
+ .auth-story .eyebrow { font-size: 8px; }
+ .auth-story > p:not(.eyebrow) { font-size: 12px; margin-bottom: 0; }
+ .auth-illustration { display: none; }
+ .auth-card { padding: 28px 24px; }
+ .auth-card h2 { font-size: 28px; }
+ .auth-footer { font-size: 9px; }
+ .task-account-row { flex-direction: column; align-items: stretch; gap: 8px; }
+ .task-account-row .actions { flex-wrap: wrap; }
+ .task-accounts .section-head { flex-direction: column; gap: 10px; }
+ #task-account-form { padding: 16px; }
+ #account-login.purchase-account { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 350px) { .brand > span:last-child { font-size: 12px; } .user-actions a { max-width: 80px; } }
+.task-accounts { margin-top: 0; padding-top: 0; border-top: 0; }
+.builder-actions { padding-top: 24px; border-top: 1px solid var(--line); }

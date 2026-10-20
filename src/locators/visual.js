@@ -5,7 +5,7 @@ export class VisualAnchors {
   constructor(page,assetDir){this.page=page;this.assetDir=assetDir;}
   async capture(selector,name) {
     await mkdir(this.assetDir,{recursive:true});
-    const target=this.page.locator(selector);
+    const target=typeof selector==='string'?this.page.locator(selector):selector;
     if(await target.count()!==1)fail('LOCATOR','视觉锚点需要唯一元素');
     const bounds=await target.boundingBox();if(!bounds)fail('LOCATOR','元素不可见');
     const filename=name+'.png';await target.screenshot({path:join(this.assetDir,filename)});

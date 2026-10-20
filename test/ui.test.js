@@ -1,3 +1,4 @@
+import {loginPage} from './helpers/auth.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm,mkdir} from 'node:fs/promises';
@@ -13,6 +14,7 @@ test('dashboard saves configuration, imports, validates twice, publishes and dis
   const app=await serve({runtime,port:0}),browser=await chromium.launch({headless:true,executablePath:await browserExecutable()});
   t.after(async()=>{await browser.close();await app.close();await f.close();await rm(dir,{recursive:true,force:true});});
   const page=await browser.newPage({viewport:{width:1440,height:1100}});
+  await loginPage(page,app);
   await page.goto('http://127.0.0.1:'+app.server.address().port);
   await page.getByRole('link',{name:'站点与购买配置',exact:true}).click();
   await page.locator('#config-json').fill(JSON.stringify({site:f.site,intent:f.intent,parameters:{},headless:true}));

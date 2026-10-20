@@ -1,3 +1,4 @@
+import {loginPage} from './helpers/auth.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm,mkdir} from 'node:fs/promises';
@@ -18,6 +19,7 @@ test('workspace pages preserve drafts and history, and paginate workflows and ru
   t.after(async()=>{await browser.close();await app.close();await f.close();await rm(dir,{recursive:true,force:true});});
   const page=await browser.newPage({viewport:{width:1440,height:1100}}),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
+  await loginPage(page,app);
   await page.goto('http://127.0.0.1:'+app.server.address().port+'/#/config');
   await page.waitForFunction(()=>document.querySelector('#connection').textContent==='本机已连接');
   const active=async id=>{
@@ -31,15 +33,15 @@ test('workspace pages preserve drafts and history, and paginate workflows and ru
   assert.equal(await page.locator('#overview-run-list .preview-row').count(),3);
   assert.equal(await page.locator('#overview-workflow-list .preview-row').count(),3);
   await page.locator('#config-json').fill('{"draft":true}');
-  await page.getByRole('link',{name:'登录账户',exact:true}).click();
-  await page.locator('#login-username').fill('未保存的账号');
+  await page.getByRole('link',{name:'API 与出口',exact:true}).click();
+  await page.locator('#api-name').fill('未保存的 API');
   await page.getByRole('link',{name:'工作流仓库',exact:true}).click();
   await active('workflows');
-  await page.goBack();await active('account-login');
-  assert.equal(await page.locator('#login-username').inputValue(),'未保存的账号');
+  await page.goBack();await active('connections');
+  assert.equal(await page.locator('#api-name').inputValue(),'未保存的 API');
   await page.goBack();await active('config');
   assert.equal(await page.locator('#config-json').inputValue(),'{"draft":true}');
-  await page.goForward();await active('account-login');
+  await page.goForward();await active('connections');
   await page.goForward();await active('workflows');
   await page.reload();await page.waitForFunction(()=>document.querySelectorAll('#workflow-rows tr').length===10);
   await active('workflows');assert.match(await page.title(),/工作流仓库/);
@@ -63,7 +65,7 @@ test('workspace pages preserve drafts and history, and paginate workflows and ru
   await page.locator('#run-detail[open]').waitFor();
   assert.match(await page.locator('#detail').textContent(),/"id": "run-3"/);
   await page.goBack();await active('workflows');assert.equal(await page.locator('#run-detail').isVisible(),false);
-  const names={'overview':'运行概况','account-login':'登录账户','workflows':'工作流仓库','runs':'执行记录','config':'站点与购买配置'};
+  const names={'overview':'运行概况','connections':'API 与出口','workflows':'工作流仓库','runs':'执行记录','config':'站点与购买配置'};
   const screenshots=resolve('release/ui');await mkdir(screenshots,{recursive:true});
   for(const width of [1440,768,390,320]){
     await page.setViewportSize({width,height:width===1440?1100:844});

@@ -40,11 +40,7 @@ if(!command||command==='help') {
       await runtime.warm();if(flags.url)await runtime.session.goto(runtime.session.page,flags.url);
       const {inspectPage}=await import('./browser/inspect.js');out(await inspectPage(runtime.session.page));
     } else if(command==='anchors') {
-      const run=await runtime.execute({...ref,mode:'trial',captureAnchors:true});
-      if(run.status!=='trial-ready')fail('LOCATOR','锚点采集试运行未通过',run.error);
-      const document=runtime.repository.get(flags.id,Number(flags.version)).document;
-      for(const entry of run.steps)if(entry.recipe.target?.anchor)document.steps.find(s=>s.id===entry.id).target.anchor=entry.recipe.target.anchor;
-      out(runtime.repository.create(document));
+      out(await runtime.captureWorkflow(ref));
     } else if(command==='anchor') {
       await runtime.warm();
       const {VisualAnchors}=await import('./locators/visual.js');

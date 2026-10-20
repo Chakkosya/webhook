@@ -61,6 +61,7 @@ export async function evaluateRule(page,rule,baseline) {
   }catch(error){return {status:'unknown',reason:'页面元素读取失败：'+error.message};}
 }
 export function ruleDescription(rule) {
+  if(!rule)return '草稿 · 等待分析与验证';
   if(rule.type==='stock-form')return '商品区域内，加购字段与可点击按钮同时存在';
   if(rule.type==='stock-count')return '商品库存数字大于 0';
   if(rule.type==='number')return '价格'+(rule.operator==='below'?'低于 ':'高于 ')+rule.value;

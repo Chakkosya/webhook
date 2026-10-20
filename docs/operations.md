@@ -225,15 +225,23 @@ npm run cli -- resolve --key purchase-001 --outcome created --invoice ORDER-A1 -
 | 方法与路径 | 操作 |
 | --- | --- |
 | GET /api/health | 服务存活 |
+| GET /api/auth/status | 网站登录状态、管理员初始化状态和发信可用性 |
+| POST /api/auth/setup | 首次创建管理员并接管已有工作台 |
+| POST /api/auth/code、/register | 发送邮箱验证码、验证并注册 |
+| POST /api/auth/signin、/signout | 网站登录、注销当前会话 |
+| GET /api/mail、POST /api/mail/save | 管理员查看、配置 SMTP 或 Resend |
 | GET /api/connections | 已保存 API 和出口的公开信息 |
 | POST /api/apis/save、/test、/default、/delete | 添加、测试、设置默认或删除 API |
 | POST /api/proxies/save、/test、/delete | 添加、测试或删除 SS / HTTP 出口 |
 | GET /api/monitors | 监控任务和检查结果 |
+| POST /api/monitors/draft | 创建可保存商家账户的任务草稿 |
+| POST /api/monitors/accounts/save、/select、/check、/delete | 以 monitorId 隔离的账户保存、多选、检测和删除 |
 | POST /api/monitors/analyze | 根据自然语言与真实页面生成并验证监控 |
 | POST /api/monitors/start、/stop、/check、/delete | 启动、暂停、立即检查或删除任务 |
 | GET /api/status | 版本、运行、指标、修补队列和事件 |
 | GET、POST /api/config | 读取、保存本站点配置 |
 | POST /api/workflows | 导入新候选 |
+| POST /api/workflows/anchors | workflowId、version 对应的只读双定位采集，生成待验证版本 |
 | GET /api/workflow?id=...&version=... | 查看版本 |
 | GET /api/diff?id=...&a=...&b=... | 比较版本 |
 | POST /api/publish、/api/rollback | 发布、回滚 |
@@ -245,6 +253,8 @@ npm run cli -- resolve --key purchase-001 --outcome created --invoice ORDER-A1 -
 | POST /api/monitor/start、/api/monitor/stop | 启停监控 |
 | POST /api/resolve | 人工处理未知交易 |
 | POST /api/diagnose、/api/repair | 场外诊断与修补候选 |
+
+网站登录、注册状态和健康检查可公开访问，其余 API 必须携带登录 Cookie。首位管理员使用部署数据目录；其他用户的数据位于 `users/<用户ID>`。网站密码与商家密码分别保存，商家账户按任务隔离。账户保存或勾选变更会撤销任务的两次验证，需要重新分析。
 
 ## 已知限制
 

@@ -79,9 +79,10 @@ jobs:
           const health=await fetch('http://127.0.0.1:3000/api/health',{signal:AbortSignal.timeout(5000)});
           assert.equal(health.status,200);
           assert.equal((await health.json()).status,'ok');
-          const status=await(await fetch('http://127.0.0.1:3000/api/status',{signal:AbortSignal.timeout(5000)})).json();
-          assert.equal(status.configured,false);
-          for(const path of ['/','/app.js','/workspace.js','/style.css']) {
+          const status=await fetch('http://127.0.0.1:3000/api/status',{signal:AbortSignal.timeout(5000)});
+          assert.equal(status.status,401);await status.json();
+          const auth=await(await fetch('http://127.0.0.1:3000/api/auth/status')).json();assert.equal(auth.setup,true);
+          for(const path of ['/','/signin','/signup','/auth.js','/app.js','/workspace.js','/style.css']) {
             const response=await fetch('http://127.0.0.1:3000'+path,{signal:AbortSignal.timeout(5000)});
             assert.equal(response.status,200,path);
             assert.ok((await response.text()).length>0,path);
@@ -124,8 +125,8 @@ jobs:
           assert.equal(await readFile('/app/.data/credentials.key','utf8'),Buffer.alloc(32,7).toString('hex')+'\n');
           assert.equal(await readFile('/app/.data/state.json','utf8'),JSON.stringify({users:[]}));
           const response=await fetch('http://127.0.0.1:3000/api/status',{signal:AbortSignal.timeout(5000)});
-          assert.equal(response.status,200);
-          assert.equal((await response.json()).configured,false);
+          assert.equal(response.status,401);await response.json();
+          const auth=await(await fetch('http://127.0.0.1:3000/api/auth/status')).json();assert.equal(auth.setup,true);
           console.log('Upgrade and restart preserve the existing key and state');
           JS
       - name: Publish to GHCR

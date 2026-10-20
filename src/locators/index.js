@@ -17,13 +17,14 @@ export class Locators {
           const point=await this.visual.locate(await page.screenshot(),step.target.anchor);
           if(!point)throw new Error('视觉锚点没有唯一匹配');
           const selector=await page.evaluate(({x,y})=>{
+            for(const element of document.querySelectorAll('[data-workflow-anchor]'))element.removeAttribute('data-workflow-anchor');
             const el=document.elementFromPoint(x,y);if(!el)return null;
             const target=el.closest('button,input,select,textarea,a')||el;
             target.setAttribute('data-workflow-anchor','active');return '[data-workflow-anchor="active"]';
           },point);
           if(!selector)throw new Error('视觉坐标没有命中元素');locator=page.locator(selector);
         }
-        if(await locator.count()!==1||!await locator.isVisible())throw new Error('定位元素不存在、不唯一或不可见');
+        if(await locator.count()!==1||!await locator.isVisible()||!await locator.isEnabled())throw new Error('定位元素不存在、不唯一或不可见');
         this.repository.locator(workflowId,step.id,strategy,true);
         return {locator,strategy};
       }catch(error){cause=error;this.repository.locator(workflowId,step.id,strategy,false);}

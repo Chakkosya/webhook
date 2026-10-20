@@ -9,7 +9,7 @@ function endpoint(value) {
 }
 const publicProfile=({id,name,endpoint,model,key})=>({id,name,endpoint,model,hasKey:!!key});
 export class ApiProfiles {
-  constructor(store){this.store=store;}
+  constructor(store,environment=process.env){this.store=store;this.environment=environment;}
   list(){const active=this.store.preference('default-api');return this.store.list('api').map(value=>({...publicProfile(value),isDefault:value.id===active}));}
   save(input) {
     const previous=input.id?this.store.get('api',input.id):{};
@@ -24,7 +24,7 @@ export class ApiProfiles {
     const records=this.store.list('api'),selected=id||this.store.preference('default-api');
     const value=records.find(record=>record.id===selected)||(!id?records[0]:null);
     if(value)return value;
-    if(!id&&process.env.AI_ENDPOINT&&process.env.AI_MODEL&&process.env.AI_API_KEY)return {endpoint:endpoint(process.env.AI_ENDPOINT),model:process.env.AI_MODEL,key:process.env.AI_API_KEY};
+    if(!id&&this.environment.AI_ENDPOINT&&this.environment.AI_MODEL&&this.environment.AI_API_KEY)return {endpoint:endpoint(this.environment.AI_ENDPOINT),model:this.environment.AI_MODEL,key:this.environment.AI_API_KEY};
     fail('AI_CONFIG','先在「API 与出口」中添加一个 AI API');
   }
   delete(id){this.store.get('api',id);this.store.delete('api',id);if(this.store.preference('default-api')===id)this.store.preference('default-api',this.store.list('api')[0]?.id||'');}

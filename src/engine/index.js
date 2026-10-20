@@ -56,7 +56,7 @@ export class Engine {
         let locator,strategy;
         if(step.action!=='navigate')({locator,strategy}=await this.locators.resolve(this.session.page,workflow.id,step));
         entry.locator=strategy;
-        if(captureAnchors&&step.action!=='navigate')entry.recipe.target.anchor=await new VisualAnchors(this.session.page,join(this.dataDir,'anchors')).capture(step.target.selector,run.id+'-'+index);
+        if(captureAnchors&&step.action!=='navigate')entry.recipe.target.anchor=await new VisualAnchors(this.session.page,join(this.dataDir,'anchors')).capture(locator,run.id+'-'+index);
         if(step.action==='navigate') {
           await this.session.goto(this.session.page,step.url,'order',remaining());
         } else if(step.action==='fill')await locator.fill(String(step.value),{timeout:remaining().absoluteMs});

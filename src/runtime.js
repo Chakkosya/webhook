@@ -13,16 +13,18 @@ import {WorkspaceStore} from './workspace/store.js';
 import {ApiProfiles} from './workspace/profiles.js';
 import {ProxyProfiles} from './browser/proxy.js';
 import {PageMonitors} from './monitor/pages.js';
+import {MonitorAccounts} from './monitor/accounts.js';
 export class Runtime {
-  constructor(dataDir=process.env.DATA_DIR||'.data/workflow'){this.dataDir=resolve(dataDir);this.events=[];}
+  constructor(dataDir=process.env.DATA_DIR||'.data/workflow',environment=process.env){this.dataDir=resolve(dataDir);this.environment=environment;this.events=[];}
   async open() {
     await mkdir(this.dataDir,{recursive:true});
     this.kernel=new SafetyKernel(join(this.dataDir,'runtime.sqlite'));this.repository=new WorkflowRepository(this.kernel.db);
     this.credentials=await new CredentialStore(this.kernel.db,this.dataDir).open();
     try{this.config=JSON.parse(await readFile(join(this.dataDir,'config.json'),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
     this.workspace=new WorkspaceStore(this.kernel.db,this.credentials.key);
-    this.apis=new ApiProfiles(this.workspace);this.proxies=new ProxyProfiles(this.workspace);
-    this.pageMonitors=new PageMonitors({store:this.workspace,proxies:this.proxies,dataDir:this.dataDir,onEvent:value=>this.event(value)});
+    this.apis=new ApiProfiles(this.workspace,this.environment);this.proxies=new ProxyProfiles(this.workspace);
+    this.monitorAccounts=new MonitorAccounts(this.workspace);
+    this.pageMonitors=new PageMonitors({store:this.workspace,proxies:this.proxies,accounts:this.monitorAccounts,dataDir:this.dataDir,onEvent:value=>this.event(value)});
     await this.pageMonitors.restore();
     return this;
   }
@@ -35,7 +37,7 @@ export class Runtime {
     this.config=config;await writeFile(join(this.dataDir,'config.json'),JSON.stringify(config,null,2));
   }
   credentialStatus(){const site=this.config?.site;return site?this.credentials.status(site.origin,site.account):{saved:false,username:null};}
-  accountUsername(){return this.credentialStatus().username||process.env[this.config?.site.login?.usernameEnv]||null;}
+  accountUsername(){return this.credentialStatus().username||this.environment[this.config?.site.login?.usernameEnv]||null;}
   saveCredentials(value) {
     if(!this.config)fail('CONFIG','请先保存站点与账户配置');
     if(this.session?.busy||this.starting)fail('BUSY','浏览器正在操作，请在操作结束后保存账号');
@@ -58,13 +60,25 @@ export class Runtime {
     if(this.session)return this.session;
     const config=this.config;
     const session=new BrowserSession({site:config.site,kernel:this.kernel,dataDir:this.dataDir,headless:manual?false:config.headless!==false,
-      proxyProfile:this.proxies.get(config.proxyId||config.site.proxyId),getCredentials:()=>{const saved=this.credentials.get(config.site.origin,config.site.account);return saved?{...saved,needsLogin:this.credentials.needsLogin(config.site.origin,config.site.account)}:null;},
+      environment:this.environment,proxyProfile:this.proxies.get(config.proxyId||config.site.proxyId),getCredentials:()=>{const saved=this.credentials.get(config.site.origin,config.site.account);return saved?{...saved,needsLogin:this.credentials.needsLogin(config.site.origin,config.site.account)}:null;},
       onAuthenticated:username=>this.credentials.loggedIn(config.site.origin,config.site.account,username),onEvent:event=>this.event(event),executablePath:await browserExecutable(process.env.BROWSER_EXECUTABLE)});
     try{await session.open({manual});}catch(error){this.lastBrowserHealth=session.lastHealth||{at:new Date().toISOString(),status:'failed',message:error.message,category:error.code};await session.close();throw error;}
     this.session=session;
     this.engine=new Engine({session,adapter:createAdapter(config.site),kernel:this.kernel,repository:this.repository,dataDir:this.dataDir,visual:new VisualAnchors(session.page,join(this.dataDir,'anchors'))});
     if(!manual)session.keepAlive(config.keepAliveMs||60000);
     return session;
+  }
+  async captureWorkflow({workflowId,version}){
+    const run=await this.execute({workflowId,version,mode:'trial',captureAnchors:true});
+    if(run.status!=='trial-ready')fail('LOCATOR','双定位采集未通过：'+(run.error?.message||run.status),run.error);
+    const document=this.repository.get(workflowId,version).document;
+    for(const step of document.steps){
+      if(step.action==='navigate')continue;
+      const anchor=run.steps.find(entry=>entry.id===step.id)?.recipe.target?.anchor;
+      if(!anchor)fail('LOCATOR','步骤 '+step.id+' 未采集到视觉锚点，请核对当前测试目标');
+      step.target.anchor=anchor;
+    }
+    return this.repository.create(document);
   }
   async execute({workflowId,version,mode='trial',goal=this.config?.goal||'invoice',captureAnchors=false}) {
     await this.warm();

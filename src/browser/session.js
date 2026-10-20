@@ -6,7 +6,7 @@ import {RequestGate,formRequest} from './gate.js';
 import {Progress,until,conditions,perform} from './wait.js';
 import {timing} from '../workflow/schema.js';
 import {fail,Fault,errorRecord} from '../errors.js';
-function hideCredentials(error,values) {
+export function hideCredentials(error,values) {
   const hide=value=>values.filter(Boolean).reduce((text,secret)=>text.replaceAll(secret,'[redacted]').replaceAll(JSON.stringify(secret).slice(1,-1),'[redacted]'),String(value));
   const result=new Error(hide(error.message));result.name=error.name;result.code=error.code;result.stack=hide(error.stack||error.message);
   const scrub=value=>typeof value==='string'?hide(value):Array.isArray(value)?value.map(scrub):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([key,item])=>[key,scrub(item)])):value;
@@ -15,15 +15,15 @@ function hideCredentials(error,values) {
   return result;
 }
 export class BrowserSession {
-  constructor({site,kernel,dataDir,executablePath,headless=true,proxyProfile,getCredentials=()=>null,onAuthenticated=()=>{},onEvent=()=>{}}) {
-    Object.assign(this,{site,kernel,dataDir,executablePath,headless,proxyProfile,getCredentials,onAuthenticated,onEvent});
+  constructor({site,kernel,dataDir,executablePath,headless=true,environment=process.env,proxyProfile,getCredentials=()=>null,onAuthenticated=()=>{},onEvent=()=>{}}) {
+    Object.assign(this,{site,kernel,dataDir,executablePath,headless,environment,proxyProfile,getCredentials,onAuthenticated,onEvent});
     this.busy=false;this.timer=null;this.lastHealth=null;
   }
   async open({manual=false}={}) {
     const profile=join(this.dataDir,'browser',this.site.account);await mkdir(profile,{recursive:true});
     this.gate=new RequestGate(this.site,this.kernel);
     this.proxyRoute=await openProxy(this.proxyProfile);
-    this.context=await chromium.launchPersistentContext(profile,{headless:this.headless,executablePath:this.executablePath,args:this.proxyRoute.proxy||this.site.proxy?['--proxy-bypass-list=<-loopback>']:[],serviceWorkers:'block',viewport:{width:1280,height:900},proxy:this.proxyRoute.proxy||(this.site.proxy?{server:this.site.proxy.server,username:process.env[this.site.proxy.usernameEnv],password:process.env[this.site.proxy.passwordEnv]}:undefined)});
+    this.context=await chromium.launchPersistentContext(profile,{headless:this.headless,executablePath:this.executablePath,args:this.proxyRoute.proxy||this.site.proxy?['--proxy-bypass-list=<-loopback>']:[],serviceWorkers:'block',viewport:{width:1280,height:900},proxy:this.proxyRoute.proxy||(this.site.proxy?{server:this.site.proxy.server,username:this.environment[this.site.proxy.usernameEnv],password:this.environment[this.site.proxy.passwordEnv]}:undefined)});
     await this.context.route('**/*',route=>this.gate.route(route));
     this.page=this.context.pages()[0]||await this.context.newPage();this.monitorPage=await this.context.newPage();
     this.progress=new Progress(this.page);this.monitorProgress=new Progress(this.monitorPage);
@@ -66,7 +66,7 @@ export class BrowserSession {
     const login=this.site.login;
     if(!login)fail('SESSION','会话已过期，请配置本站点登录步骤或使用 login 窗口登录');
     const saved=this.getCredentials();
-    const username=saved?.username||process.env[login.usernameEnv],password=saved?.password||process.env[login.passwordEnv];
+    const username=saved?.username||this.environment[login.usernameEnv],password=saved?.password||this.environment[login.passwordEnv];
     if(!username||!password)fail('SESSION','请保存本站点账号密码，或配置登录环境变量');
     const policy=timing(this.site.timing),started=Date.now();
     const remaining=()=>{const absoluteMs=policy.absoluteMs-(Date.now()-started);if(absoluteMs<=0)fail('TIMEOUT','登录达到实测等待上限');return {...policy,absoluteMs};};

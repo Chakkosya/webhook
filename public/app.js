@@ -10,11 +10,12 @@ function showPage() {
   $('#run-detail').close();
   for(const el of views)el.hidden=el!==view;
   $('.hero').hidden=view.id!=='overview';
-  const current=links.find(link=>link.hash==='#/'+view.id);
+  const current=links.find(link=>link.hash==='#/'+view.id)||$('#user-email');
+  const title=view.id==='settings'?'工作台账户':current.textContent;
   for(const link of links)if(link===current)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
-  $('#page-context').textContent='工作台 / '+current.textContent;
+  $('#page-context').textContent='工作台 / '+title;
   $('#page-context').hidden=view.id==='overview';
-  document.title=current.textContent+' · 确定性工作流';
+  document.title=title+' · 确定性工作流';
   current.scrollIntoView({block:'nearest',inline:'nearest'});
   window.scrollTo(0,0);
 }
@@ -39,6 +40,7 @@ $('#notice').onclick=()=>{$('#notice').style.display='none';clearTimeout(noticeT
 function notice(text){$('#notice').textContent=text;$('#notice').style.display='block';clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>$('#notice').style.display='none',7000);}
 async function api(path,body) {
   const response=await fetch('/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(response.status===401){location.replace('/signin');throw new Error('请重新登录工作台');}
   const result=await response.json();if(!response.ok)throw new Error(result.error?.message||result.error);return result;
 }
 function button(text,fn){const el=node('button',text,'subtle');el.addEventListener('click',()=>action(el,fn));return el;}
@@ -52,7 +54,7 @@ function renderWorkflows() {
   for(const row of pageRows('workflow')) {
     const tr=node('tr');tr.append(node('td',row.id+' / v'+row.version),node('td',labels[row.state]||row.state),node('td',row.streak+' / 2'));
     const td=node('td'),actions=node('div',undefined,'actions');
-    actions.append(button('试运行',()=>run(row,'trial')),button('发布',async()=>{await api('publish',row);notice('版本已发布');}),button('真实下单',()=>run(row,'live')),button('监控触发',async()=>{await api('monitor/start',{workflowId:row.id,version:row.version,mode:'live'});notice('监控已启动');}),button('回滚',async()=>{await api('rollback',row);notice('发布版本已切换');}));
+    actions.append(button('试运行',()=>run(row,'trial')),button('采集双定位',async()=>{const candidate=await api('workflows/anchors',{workflowId:row.id,version:row.version});notice('已采集选择器与视觉锚点，生成 v'+candidate.version+'，连续试运行两次后可发布');}),button('发布',async()=>{await api('publish',row);notice('版本已发布');}),button('真实下单',()=>run(row,'live')),button('监控触发',async()=>{await api('monitor/start',{workflowId:row.id,version:row.version,mode:'live'});notice('监控已启动');}),button('回滚',async()=>{await api('rollback',row);notice('发布版本已切换');}));
     td.append(actions);tr.append(td);tbody.append(tr);
   }
 }
@@ -111,5 +113,27 @@ $('#save').onclick=()=>action($('#save'),async()=>{await api('config',JSON.parse
 $('#import').onchange=async event=>{try{const file=event.target.files[0];if(!file)return;await api('workflows',JSON.parse(await file.text()));notice('候选版本已导入');await refresh();}catch(error){notice(error.message);}finally{event.target.value='';}};
 $('#close-detail').onclick=()=>$('#run-detail').close();
 setupWorkspace({$,api,button,action,notice,node,refresh,time});
+$('#signout').onclick=async()=>{await api('auth/signout',{});location.replace('/signin');};
+try{
+  const {user}=await api('auth/status');
+  if(!user)location.replace('/signin');
+  else{
+    $('#user-email').textContent=user.email;$('#settings-identity').textContent=user.email+(user.owner?' · 管理员':' · 邮箱已验证');
+    $('#mail-settings').hidden=!user.owner;
+    if(user.owner){
+      const config=await api('mail');
+      $('#mail-provider').value=config.provider||'resend';$('#mail-from').value=config.from||'';
+      $('#smtp-host').value=config.host||'';$('#smtp-port').value=config.port||587;$('#smtp-user').value=config.username||'';$('#smtp-secure').checked=!!config.secure;
+      if(config.configured)$('#mail-feedback').textContent='发信服务已配置。密钥与密码留空可保留原值。';
+    }
+  }
+}catch(error){notice(error.message);}
+function mailMode(){const smtp=$('#mail-provider').value==='smtp';$('#smtp-fields').hidden=!smtp;$('#mail-key-field').hidden=smtp;}
+$('#mail-provider').onchange=mailMode;mailMode();
+$('#mail-form').onsubmit=async event=>{
+  event.preventDefault();const button=$('#save-mail');button.disabled=true;
+  try{await api('mail/save',{provider:$('#mail-provider').value,from:$('#mail-from').value,key:$('#mail-key').value,host:$('#smtp-host').value,port:Number($('#smtp-port').value),username:$('#smtp-user').value,password:$('#smtp-password').value,secure:$('#smtp-secure').checked});$('#mail-key').value='';$('#smtp-password').value='';$('#mail-feedback').textContent='已保存。新用户可在 Sign Up 页面通过邮箱验证码注册。';}
+  catch(error){$('#mail-feedback').textContent=error.message;}finally{button.disabled=false;}
+};
 try{const config=await api('config');if(config)$('#config-json').value=JSON.stringify(config,null,2);await loadCredentials();await refresh();}catch(error){notice(error.message);$('#connection').textContent='连接失败';}
 setInterval(()=>refresh().catch(()=>{$('#connection').textContent='连接中断';}),5000);

@@ -21,8 +21,8 @@ test('runtime starts with a hexadecimal key and leaves legacy state untouched',a
     assert.equal(health.status,200);
     assert.deepEqual(await health.json(),{status:'ok'});
     const status=await fetch(base+'/api/status',{signal:AbortSignal.timeout(5000)});
-    assert.equal(status.status,200);
-    assert.equal((await status.json()).configured,false);
+    assert.equal(status.status,401);
+    const auth=await(await fetch(base+'/api/auth/status')).json();assert.equal(auth.setup,true);
     assert.equal(await readFile(join(dir,'credentials.key'),'utf8'),key);
     assert.equal(await readFile(join(dir,'state.json'),'utf8'),state);
   } finally {

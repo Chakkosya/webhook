@@ -25,7 +25,12 @@ export async function buildMonitor(runtime,input,assistant) {
   const previous=input.id?runtime.pageMonitors.get(input.id):null;
   if(previous&&runtime.pageMonitors.running.has(previous.id))fail('BUSY','请先暂停监控再重新配置');
   if(previous&&!webhook)webhook=previous.webhook||'';
-  const id=previous?.id||randomUUID(),browser=new ObservationBrowser({dataDir:runtime.dataDir,id,profile:runtime.proxies.get(input.proxyId)});
+  if(previous&&runtime.pageMonitors.preparing.has(previous.id))fail('BUSY','该任务正在分析页面或检测登录，请等待完成');
+  const id=previous?.id||randomUUID(),accounts=runtime.monitorAccounts.selected(id);
+  if(runtime.monitorAccounts.records(id).length&&!accounts.length)fail('MONITOR_ACCOUNT','请至少选择一个账户参与监控');
+  for(const account of accounts)if(new URL(account.loginUrl).origin!==new URL(url).origin)fail('MONITOR_ACCOUNT','任务地址与已保存账户不属于同一站点，请更新账户');
+  const browsers=(accounts.length?accounts:[null]).map(account=>new ObservationBrowser({dataDir:runtime.dataDir,id:account?id+'/'+account.id:id,profile:runtime.proxies.get(input.proxyId),account,onAccount:changes=>runtime.monitorAccounts.update(id,account.id,changes)}));
+  const browser=browsers[0];runtime.pageMonitors.preparing.set(id,input.proxyId||null);
   try {
     await browser.open();
     const samples=[await browser.read(url)],evidence=await browser.snapshot();
@@ -38,7 +43,18 @@ export async function buildMonitor(runtime,input,assistant) {
     const second=await evaluateRule(browser.page,rule,first.value);
     if(second.status==='unknown')fail('MONITOR_EVIDENCE','第二次页面验证未通过：'+second.reason);
     if(rule.type==='change'&&first.value!==second.value)fail('MONITOR_EVIDENCE','页面目标持续变化，请缩小监控范围后重新分析');
+    const accountStates={};
+    if(accounts.length)accountStates[accounts[0].id]={baseline:second.value,triggered:false};
+    for(let index=1;index<browsers.length;index++){
+      const other=browsers[index];await other.open();
+      samples.push(await other.read(url));validateRule(rule,kind,await other.snapshot());
+      const first=await evaluateRule(other.page,rule);
+      samples.push(await other.read(url));
+      const checked=await evaluateRule(other.page,rule,first.value);
+      if(first.status==='unknown'||checked.status==='unknown'||rule.type==='change'&&first.value!==checked.value)fail('MONITOR_EVIDENCE','账户「'+accounts[index].name+'」两次页面验证未通过');
+      accountStates[accounts[index].id]={baseline:checked.value,triggered:false};
+    }
     const maximum=Math.max(...samples),policy={absoluteMs:maximum+45000,idleMs:maximum+30000,samplesMs:samples};
-    return runtime.pageMonitors.add({id,name:String(input.name||output.name||evidence.title).trim(),url,requirement,kind,rule,proxyId:input.proxyId||null,apiId:input.apiId||null,intervalMs,webhook,explanation:String(output.explanation||ruleDescription(rule)),verifiedChecks:2,baseline:second.value,preview:second,policy});
-  }finally{await browser.close();}
+    return runtime.pageMonitors.add({id,name:String(input.name||output.name||evidence.title).trim(),url,requirement,kind,rule,proxyId:input.proxyId||null,apiId:input.apiId||null,intervalMs,webhook,explanation:String(output.explanation||ruleDescription(rule)),verifiedChecks:2,accountStates,baseline:second.value,preview:second,policy});
+  }finally{await Promise.allSettled(browsers.map(browser=>browser.close()));runtime.pageMonitors.preparing.delete(id);}
 }

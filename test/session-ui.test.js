@@ -1,3 +1,4 @@
+import {loginPage} from './helpers/auth.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm,mkdir} from 'node:fs/promises';
@@ -13,18 +14,19 @@ test('the account panel saves a password without returning it and can restore an
   const app=await serve({runtime,port:0}),browser=await chromium.launch({headless:true,executablePath:await browserExecutable()});
   t.after(async()=>{await browser.close();await app.close();await f.close();await rm(dir,{recursive:true,force:true});});
   const page=await browser.newPage({viewport:{width:1440,height:1100}});
+  await loginPage(page,app);
   await page.goto('http://127.0.0.1:'+app.server.address().port);
   await page.getByRole('link',{name:'站点与购买配置',exact:true}).click();
   await page.locator('#config-json').fill(JSON.stringify({site:f.site,intent:f.intent,headless:true}));
   await page.locator('#save').click();await page.getByRole('status').filter({hasText:'配置已保存'}).waitFor();
-  await page.getByRole('link',{name:'登录账户',exact:true}).click();
+  await page.locator('.purchase-credentials summary').click();
   await page.locator('#login-username').fill('fixture-user');await page.locator('#login-password').fill('fixture-secret');
   await page.locator('#save-login').click();
   await page.getByRole('status').filter({hasText:'账号已加密保存，登录状态已确认'}).waitFor();
   assert.equal(await page.locator('#login-password').inputValue(),'');assert.equal(f.state.logins,1);
   const returned=await page.evaluate(async()=>JSON.stringify(await(await fetch('/api/credentials')).json()));
   assert.equal(returned.includes('fixture-secret'),false);assert.equal(returned.includes('fixture-user'),true);
-  await page.reload();await page.waitForFunction(()=>document.querySelector('#login-username').value==='fixture-user');
+  await page.reload();await page.locator('.purchase-credentials summary').click();await page.waitForFunction(()=>document.querySelector('#login-username').value==='fixture-user');
   assert.equal(await page.locator('#login-password').inputValue(),'');
   f.state.loggedIn=false;await page.locator('#check-login').click();
   await page.getByRole('status').filter({hasText:'登录状态已确认'}).waitFor();

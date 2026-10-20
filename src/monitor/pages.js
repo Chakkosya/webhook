@@ -2,8 +2,8 @@ import {ObservationBrowser,monitorUrl} from '../browser/observation.js';
 import {evaluateRule,ruleDescription} from './rules.js';
 import {fail,errorRecord} from '../errors.js';
 export class PageMonitors {
-  constructor({store,proxies,dataDir,onEvent=()=>{}}){Object.assign(this,{store,proxies,dataDir,onEvent});this.running=new Map();this.closed=false;}
-  list(){return this.store.list('monitor').map(({webhook,...record})=>({...record,hasWebhook:!!webhook,ruleDescription:ruleDescription(record.rule),running:this.running.has(record.id)}));}
+  constructor({store,proxies,accounts,dataDir,onEvent=()=>{}}){Object.assign(this,{store,proxies,accounts,dataDir,onEvent});this.running=new Map();this.preparing=new Map();this.closed=false;}
+  list(){return this.store.list('monitor').map(({webhook,...record})=>({...record,hasWebhook:!!webhook,accounts:this.accounts?.list(record.id)||[],ruleDescription:ruleDescription(record.rule),preparing:this.preparing.has(record.id),running:this.running.has(record.id)}));}
   get(id){return this.store.get('monitor',id);}
   add(value) {
     const record=this.store.put('monitor',{...value,url:monitorUrl(value.url),enabled:false,createdAt:new Date().toISOString(),observations:[],notifications:[],notificationCount:0,aiInferenceCalls:0});
@@ -32,6 +32,35 @@ export class PageMonitors {
     try {
       await entry.opening;
       if(entry.stopped)return;
+      if(entry.channels.length>1||entry.channels[0].account){
+        const states={...(record.accountStates||{})};
+        const results=await Promise.all(entry.channels.map(async channel=>{
+          const key=channel.account.id,previous=states[key]||{baseline:record.baseline,triggered:false};
+          try{
+            await channel.browser.read(record.url,record.policy);
+            let value=await evaluateRule(channel.browser.page,record.rule,previous.baseline);
+            if(value.status==='matched'){
+              await channel.browser.read(record.url,record.policy);
+              const confirm=await evaluateRule(channel.browser.page,record.rule,previous.baseline);
+              if(confirm.status!=='matched'||record.rule.type==='change'&&confirm.value!==value.value)value={status:'unknown',reason:'两次检查结果不一致'};
+              else{
+                value={...confirm,confirmed:true};
+                if(!entry.stopped&&(!previous.triggered||record.rule.type==='change')){
+                  channel.notification={...value,value:channel.account.name+' · '+value.value};
+                  previous.triggered=true;if(record.rule.type==='change')previous.baseline=value.value;
+                }
+              }
+            }else if(value.status==='clear')previous.triggered=false;
+            states[key]=previous;
+            return {...value,accountId:key,accountName:channel.account.name,at:new Date().toISOString()};
+          }catch(error){return {status:'unknown',reason:error.message,error:errorRecord(error),category:errorRecord(error).category,accountId:key,accountName:channel.account.name,at:new Date().toISOString()};}
+        }));
+        for(const channel of entry.channels)if(channel.notification){await this.notify(record,channel.notification);channel.notification=null;}
+        const matched=results.find(value=>value.status==='matched'),unknown=results.find(value=>value.status==='unknown');
+        result={...(matched||unknown||results[0]),accounts:results,at:new Date().toISOString()};
+        record.accountStates=states;record.lastResult=result;record.observations=[result,...(record.observations||[])].slice(0,20);record.aiInferenceCalls=0;
+        this.store.put('monitor',record);return result;
+      }
       await entry.browser.read(record.url,record.policy);
       result=await evaluateRule(entry.browser.page,record.rule,record.baseline);
       if(result.status==='matched') {
@@ -51,22 +80,25 @@ export class PageMonitors {
       this.store.put('monitor',record);
       return record.lastResult;
     }catch(error) {
-      result={status:'unknown',reason:error.message,category:errorRecord(error).category,at:new Date().toISOString()};
+      result={status:'unknown',reason:error.message,error:errorRecord(error),category:errorRecord(error).category,at:new Date().toISOString()};
       if(!entry.stopped)this.update(id,{lastResult:result});
       return result;
     }finally{entry.busy=false;}
   }
   async start(id) {
     if(this.closed)fail('MONITOR_STOPPED','服务正在关闭');
+    if(this.preparing.has(id))fail('BUSY','该任务正在分析页面或检测登录，请等待完成');
     if(this.running.has(id))return this.list().find(item=>item.id===id);
     const record=this.get(id);
     if(record.verifiedChecks<2)fail('MONITOR_UNVERIFIED','需要完成两次实际页面验证后才能启动');
-    const browser=new ObservationBrowser({dataDir:this.dataDir,id,profile:this.proxies.get(record.proxyId)});
-    const entry={browser,busy:false,stopped:false};
+    const selected=this.accounts?.selected(id)||[];
+    if(this.accounts?.records(id).length&&!selected.length)fail('MONITOR_ACCOUNT','请至少选择一个任务账户，或删除账户后使用公开页面监控');
+    const channels=(selected.length?selected:[null]).map(account=>({account,browser:new ObservationBrowser({dataDir:this.dataDir,id:account?id+'/'+account.id:id,profile:this.proxies.get(record.proxyId),account,onAccount:changes=>this.accounts.update(id,account.id,changes)})}));
+    const browser=channels[0].browser,entry={browser,channels,busy:false,stopped:false};
     this.running.set(id,entry);
-    entry.opening=browser.open();
-    try{await entry.opening;}catch(error){this.running.delete(id);this.update(id,{enabled:false,lastResult:{status:'unknown',reason:error.message}});throw error;}
-    if(entry.stopped){await browser.close();return;}
+    entry.opening=Promise.allSettled(channels.map(channel=>channel.browser.open())).then(results=>{const failure=results.find(result=>result.status==='rejected');if(failure)throw failure.reason;});
+    try{await entry.opening;}catch(error){await Promise.allSettled(channels.map(channel=>channel.browser.close()));this.running.delete(id);this.update(id,{enabled:false,lastResult:{status:'unknown',reason:error.message}});throw error;}
+    if(entry.stopped){await Promise.all(channels.map(channel=>channel.browser.close()));return;}
     this.update(id,{enabled:true});
     const next=async()=>{await this.check(id).catch(()=>{});if(!entry.stopped)entry.timer=setTimeout(next,record.intervalMs);};
     entry.task=next();
@@ -74,10 +106,10 @@ export class PageMonitors {
   }
   async stop(id) {
     const entry=this.running.get(id);
-    if(entry){entry.stopped=true;clearTimeout(entry.timer);await entry.opening.catch(()=>{});await entry.browser.context?.close();while(entry.busy)await new Promise(resolve=>setTimeout(resolve,50));await entry.browser.close();this.running.delete(id);}
+    if(entry){entry.stopped=true;clearTimeout(entry.timer);await entry.opening.catch(()=>{});await Promise.all(entry.channels.map(channel=>channel.browser.context?.close()));while(entry.busy)await new Promise(resolve=>setTimeout(resolve,50));await Promise.all(entry.channels.map(channel=>channel.browser.close()));this.running.delete(id);}
     this.update(id,{enabled:false});
   }
-  async delete(id){await this.stop(id);this.store.delete('monitor',id);}
+  async delete(id){if(this.preparing.has(id))fail('BUSY','请等待页面分析或登录检测完成');await this.stop(id);for(const account of this.accounts?.records(id)||[])this.accounts.delete(id,account.id);this.store.delete('monitor',id);}
   async restore(){for(const record of this.store.list('monitor'))if(record.enabled)void this.start(record.id).catch(error=>this.onEvent({type:'monitor-start-failed',monitorId:record.id,message:error.message}));}
   async close(){this.closed=true;for(const [id,entry] of this.running){const enabled=this.get(id).enabled;await this.stop(id);if(enabled)this.update(id,{enabled:true});}}
 }

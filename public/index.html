@@ -16,11 +16,11 @@
           <a href="#/overview">运行概况</a>
           <a href="#/monitors">监控任务</a>
           <a href="#/connections">API 与出口</a>
-          <a href="#/account-login">登录账户</a>
           <a href="#/workflows">工作流仓库</a>
           <a href="#/runs">执行记录</a>
           <a href="#/config">站点与购买配置</a>
         </nav>
+        <div class="user-actions"><a href="#/settings" id="user-email" aria-label="工作台账户"></a><button id="signout" class="subtle">Sign Out</button></div>
       </div>
     </aside>
 
@@ -73,7 +73,7 @@
             </div>
           </div>
           <div class="summary-links">
-            <a href="#/account-login">管理登录账户<span aria-hidden="true">›</span></a>
+            <a href="#/monitors">管理任务与账户<span aria-hidden="true">›</span></a>
             <a href="#/config">编辑站点配置<span aria-hidden="true">›</span></a>
           </div>
         </div>
@@ -103,6 +103,7 @@
         </div>
         <section id="monitor-builder" class="panel builder-panel" hidden aria-labelledby="builder-title">
           <div class="section-head"><div><p class="eyebrow">A LITTLE HELP FROM AI</p><h2 id="builder-title">创建智能监控</h2></div><button id="close-builder" class="subtle" type="button">收起</button></div>
+          <div class="segmented" role="tablist" aria-label="监控设置"><button id="builder-rules-tab" type="button" role="tab" aria-selected="true" aria-controls="monitor-form">监控规则</button><button id="builder-accounts-tab" type="button" role="tab" aria-selected="false" aria-controls="task-accounts">商家账户（可选）</button></div>
           <form id="monitor-form">
             <div class="form-grid">
               <label class="span-two">监控网页<input id="monitor-url" type="url" required placeholder="粘贴你想监控的商品或内容页面网址"></label>
@@ -115,8 +116,19 @@
               <label>检查间隔（秒）<input id="monitor-interval" type="number" min="10" max="86400" value="30" required></label>
               <label>通知 Webhook（选填）<input id="monitor-webhook" type="url" placeholder="https://…"><small>发送通用 JSON；留空时在任务内记录提醒。</small></label>
             </div>
-            <div class="actions builder-actions"><button id="analyze-monitor" type="submit">AI 分析并预览 <span aria-hidden="true">↗</span></button><a href="#/connections">管理 API 与出口</a></div>
           </form>
+          <section id="task-accounts" class="task-accounts" aria-labelledby="task-accounts-title" hidden>
+            <div class="section-head"><div><h3 id="task-accounts-title">此任务的商家账户</h3><p class="muted">公开网页可以不登录。勾选多个账户，可同时监控各自看到的页面。</p></div><button type="button" id="add-task-account" class="subtle">＋ 添加账户</button></div>
+            <div id="task-account-list"></div><p id="task-account-empty" class="muted">尚未添加账户，将监控公开页面。</p>
+            <form id="task-account-form" hidden><div class="form-grid">
+              <label>账户备注<input id="task-account-name" placeholder="例如：主账号"></label>
+              <label>商家登录网址<input id="task-account-url" type="url" required placeholder="https://商家网站/login"></label>
+              <label>商家账号<input id="task-account-username" autocomplete="off" required></label>
+              <label>商家密码<input id="task-account-password" type="password" autocomplete="new-password" required placeholder="加密保存，不会回显"></label>
+            </div><div class="actions"><button id="save-task-account" type="submit">保存账户</button><button id="cancel-task-account" type="button" class="subtle">取消</button></div></form>
+            <p id="task-account-feedback" class="form-feedback" role="status"></p>
+          </section>
+          <div class="actions builder-actions"><button id="analyze-monitor" type="button">AI 分析并预览 <span aria-hidden="true">↗</span></button><a href="#/connections">管理 API 与出口</a></div>
           <p id="monitor-feedback" class="form-feedback" role="status" aria-live="polite"></p>
           <div id="monitor-preview" class="monitor-preview" hidden>
             <div class="section-head"><div><span class="badge">两次页面验证通过</span><h3 id="preview-name"></h3></div><button id="confirm-monitor">确认并启动监控</button></div>
@@ -162,36 +174,12 @@
         </div>
       </section>
 
-      <section data-page hidden id="account-login" class="panel">
-        <div class="account-intro">
-          <div class="section-head">
-            <div><p class="eyebrow">ACCOUNT SESSION</p><h2>登录账户</h2></div>
-          </div>
-          <span id="credential-state" class="badge">尚未保存</span>
-          <p id="account-scope" class="muted">先保存站点配置，再保存该站点的账号密码。</p>
-          <p class="muted">账号密码加密保存在本机，密码不会回显。登录失效时自动重登；登录步骤取自本站点学习资料。</p>
-        </div>
-        <div class="account-controls">
-          <div class="account-fields">
-            <label for="login-username">账号<input id="login-username" name="username" type="text" autocomplete="username"></label>
-            <label for="login-password">密码<input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="输入密码以保存或更新"></label>
-          </div>
-          <div class="actions account-actions">
-            <button id="save-login">保存并登录</button>
-            <button id="check-login" class="subtle">检测并重新登录</button>
-          </div>
-          <button id="delete-login" class="subtle">删除已保存账号</button>
-          <p id="login-health" class="muted"></p>
-          <div class="session-route"><label for="session-proxy">此站点的浏览器出口<select id="session-proxy"><option value="">直连</option></select></label><button id="save-session-proxy" class="subtle">保存会话出口</button></div>
-        </div>
-      </section>
-
       <section data-page hidden id="workflows" class="panel">
         <div class="section-head">
           <div><p class="eyebrow">VERSIONED REPOSITORY</p><h2>工作流仓库</h2></div>
           <label class="file-button">导入学习记录<input id="import" type="file" accept=".json,application/json"></label>
         </div>
-        <p class="muted">同一版本、同一参数连续两次试运行通过后可发布。真实下单会创建订单或账单；自动付款需在配置中明确选择。</p>
+        <p class="muted">采集双定位可在真实试运行中为每个操作保存选择器与视觉锚点。新版本以选择器优先，失败后立即使用本地视觉匹配；后续按定位成功率排序。同一版本、同一参数连续两次试运行通过后可发布。真实下单会创建订单或账单；自动付款需在配置中明确选择。</p>
         <div class="table-wrap">
           <table>
             <thead><tr><th>工作流 / 版本</th><th>状态</th><th>连续试跑</th><th>操作</th></tr></thead>
@@ -223,11 +211,53 @@
           <div><p class="eyebrow">SITE LEARNING</p><h2>站点与购买配置</h2></div>
           <button id="save">保存配置</button>
         </div>
-        <p class="muted">填写实际站点的选择器、成功耗时样本和购买意图。账号密码可在「登录账户」中保存，也可通过环境变量提供。金额使用最小货币单位。</p>
+        <p class="muted">填写实际站点的选择器、成功耗时样本和购买意图。监控账号在每个任务内管理。购买工作流的站点账号可在本页下方保存，也可通过环境变量提供。金额使用最小货币单位。</p>
         <label for="config-json">配置 JSON</label>
         <textarea id="config-json" spellcheck="false" placeholder="参见 examples/config.template.json"></textarea>
+        <details class="purchase-credentials"><summary>购买工作流的登录与会话</summary>
+<section id="account-login" class="purchase-account">
+        <div class="account-intro">
+          <div class="section-head">
+            <div><p class="eyebrow">ACCOUNT SESSION</p><h3>购买工作流的站点账户</h3></div>
+          </div>
+          <span id="credential-state" class="badge">尚未保存</span>
+          <p id="account-scope" class="muted">先保存站点配置，再保存该站点的账号密码。</p>
+          <p class="muted">账号密码加密保存在本机，密码不会回显。登录失效时自动重登；登录步骤取自本站点学习资料。</p>
+        </div>
+        <div class="account-controls">
+          <div class="account-fields">
+            <label for="login-username">账号<input id="login-username" name="username" type="text" autocomplete="username"></label>
+            <label for="login-password">密码<input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="输入密码以保存或更新"></label>
+          </div>
+          <div class="actions account-actions">
+            <button id="save-login">保存并登录</button>
+            <button id="check-login" class="subtle">检测并重新登录</button>
+          </div>
+          <button id="delete-login" class="subtle">删除已保存账号</button>
+          <p id="login-health" class="muted"></p>
+          <div class="session-route"><label for="session-proxy">此站点的浏览器出口<select id="session-proxy"><option value="">直连</option></select></label><button id="save-session-proxy" class="subtle">保存会话出口</button></div>
+        </div>
+      </section>
+        </details>
       </section>
 
+      <section data-page hidden id="settings" class="panel">
+        <div class="section-head"><div><p class="eyebrow">YOUR ACCOUNT</p><h2>工作台账户</h2></div></div>
+        <p id="settings-identity" class="muted"></p>
+        <section id="mail-settings" hidden><h3>邮件注册设置</h3><p class="muted">配置后，其他用户可通过邮箱验证码注册。账户与监控数据各自独立。</p>
+          <form id="mail-form"><div class="form-grid">
+            <label>发信方式<select id="mail-provider"><option value="resend">Resend</option><option value="smtp">SMTP</option></select></label>
+            <label>发件人邮箱<input id="mail-from" required placeholder="通知 &lt;bot@你的域名&gt;"></label>
+            <label id="mail-key-field" class="span-two">Resend API Key<input id="mail-key" type="password" autocomplete="off" placeholder="填写 API Key；保存后不回显"></label>
+            <div id="smtp-fields" class="form-grid span-two" hidden>
+              <label>SMTP 服务器<input id="smtp-host" placeholder="smtp.example.com"></label><label>端口<input id="smtp-port" type="number" value="587" min="1" max="65535"></label>
+              <label>SMTP 用户名<input id="smtp-user" autocomplete="off"></label><label>SMTP 密码 / 授权码<input id="smtp-password" type="password" autocomplete="off"></label>
+              <label class="check-label"><input id="smtp-secure" type="checkbox">使用 SSL（通常为 465 端口）</label>
+            </div>
+          </div><div class="actions"><button id="save-mail" type="submit">保存发信设置</button></div></form>
+          <p id="mail-feedback" class="form-feedback" role="status"></p>
+        </section>
+      </section>
       <footer>
         <p>AI 在场外学习与修补，每次执行沿用已验证流程。</p>
         <p>本机协作工作台 · 试运行不提交订单或付款 · 热路径推理调用数可审计</p>
