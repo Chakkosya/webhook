@@ -39,7 +39,7 @@ export class BrowserSession {
     try {
       await until(()=>done,policy,progress);await task;if(error)throw this.gate.lastError||error;
       if(this.site.challenge?.length)await until(async()=>!await conditions(page,this.site.challenge),{...policy,absoluteMs:Math.max(1,policy.absoluteMs-(Date.now()-started))},progress);
-    }catch(error){await page.evaluate(()=>window.stop()).catch(()=>{});throw this.gate.lastError||error;}
+    }catch(error){void progress?.cdp?.send('Page.stopLoading').catch(()=>{});throw this.gate.lastError||error;}
   }
   ready(){this.lastHealth={at:new Date().toISOString(),status:'ready'};}
   async resetAuthentication() {

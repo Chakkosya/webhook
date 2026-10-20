@@ -12,9 +12,11 @@ const url='http://127.0.0.1:'+server.address().port;
 const good=new ObservationBrowser({dataDir:dir,id:'correct-key',profile:parseProxy('ss://aes-256-gcm:workflow-ci-password@127.0.0.1:18389')});
 const bad=new ObservationBrowser({dataDir:dir,id:'incorrect-key',profile:parseProxy('ss://aes-256-gcm:incorrect-ci-password@127.0.0.1:18389')});
 try {
+  console.log('Opening the browser through SS');
   await good.open();await good.read(url,{absoluteMs:15000,idleMs:10000});
   assert.equal(await good.page.locator('#proof').innerText(),'Encrypted route works');
   await good.close();
+  console.log('Valid SS route verified; testing incorrect credentials');
   await bad.open();
   await assert.rejects(()=>bad.read(url,{absoluteMs:4000,idleMs:2500}));
   console.log('SS encrypted browser route works; incorrect credentials fail without direct fallback');

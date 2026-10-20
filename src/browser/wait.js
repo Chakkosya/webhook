@@ -14,14 +14,31 @@ export class Progress {
   close(){this.page.off('request',this.onRequest);this.page.off('requestfinished',this.onDone);this.page.off('requestfailed',this.onDone);}
 }
 export async function until(check,policy,progress,{now=Date.now,pause=ms=>new Promise(r=>setTimeout(r,ms))}={}) {
-  const started=now();let cause;
+  const started=now();let cause,checking=false,sampling=false,matched=false,checkError,wake;
+  const ready=new Promise(resolve=>{wake=resolve;});
+  const inspect=()=>{
+    try {
+      const value=check();
+      if(value&&typeof value.then==='function') {
+        checking=true;
+        Promise.resolve(value).then(result=>{matched=!!result;checking=false;if(matched)wake();},error=>{checkError=error;checking=false;if(error.code)wake();});
+      } else matched=!!value;
+    }catch(error){checkError=error;}
+  };
   while(now()-started<policy.absoluteMs) {
-    try{if(await check())return;}catch(error){if(error.code)throw error;cause=error;}
+    if(matched)return;
+    if(checkError){if(checkError.code)throw checkError;cause=checkError;checkError=null;}
+    if(!checking)inspect();
+    if(matched)return;
+    if(checkError){if(checkError.code)throw checkError;cause=checkError;checkError=null;}
     if(progress) {
-      await progress.sample();
+      if(!sampling) {
+        sampling=true;
+        try{Promise.resolve(progress.sample()).then(()=>{sampling=false;},error=>{cause=error;sampling=false;});}catch(error){cause=error;sampling=false;}
+      }
       if(now()-progress.last>=policy.idleMs)throw new Fault('TIMEOUT','页面长时间无进展',{cause,details:{kind:'idle',elapsedMs:now()-started}});
     }
-    await pause(Math.min(100,Math.max(1,policy.absoluteMs-(now()-started))));
+    await Promise.race([ready,pause(Math.min(100,Math.max(1,policy.absoluteMs-(now()-started))))]);
   }
   throw new Fault('TIMEOUT','页面等待达到实测预算的绝对上限',{cause,details:{kind:'absolute',absoluteMs:policy.absoluteMs}});
 }
@@ -41,5 +58,5 @@ export async function perform(action,policy,progress){
   progress?.touch();
   let done=false,error;const task=Promise.resolve().then(action).then(()=>{done=true;},e=>{error=e;done=true;});
   try{await until(()=>done,policy,progress);await task;if(error)throw error;}
-  catch(error){await progress?.cdp?.send('Page.stopLoading').catch(()=>{});throw error;}
+  catch(error){void progress?.cdp?.send('Page.stopLoading').catch(()=>{});throw error;}
 }
