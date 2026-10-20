@@ -3,8 +3,8 @@ function endpoint(value) {
   let url;
   try{url=new URL(String(value||'').trim());}catch{fail('AI_CONFIG','请填写有效的 API 地址');}
   if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash)fail('AI_CONFIG','API 地址需使用 HTTP 或 HTTPS，不包含密钥和查询参数');
-  url.pathname=url.pathname.replace(/\/+$/,'');
-  if(!url.pathname.endsWith('/chat/completions'))url.pathname+='/chat/completions';
+  const path=url.pathname.replace(/\/+$/,'');
+  url.pathname=path.endsWith('/chat/completions')?path:path+'/chat/completions';
   return url.href;
 }
 const publicProfile=({id,name,endpoint,model,key})=>({id,name,endpoint,model,hasKey:!!key});

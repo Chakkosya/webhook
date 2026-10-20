@@ -5,6 +5,7 @@ import {randomBytes} from 'node:crypto';
 import {WorkspaceStore} from '../src/workspace/store.js';
 import {ProxyProfiles,parseProxy} from '../src/browser/proxy.js';
 import {ApiProfiles} from '../src/workspace/profiles.js';
+import {monitorUrl} from '../src/browser/observation.js';
 
 test('API profiles support multiple providers, retain unchanged keys and never return secrets',()=>{
   const db=new DatabaseSync(':memory:');
@@ -51,4 +52,14 @@ test('authenticated HTTP proxy credentials are passed to Chromium separately fro
   const profile=parseProxy('http://fixture-user:fixture-password@127.0.0.1:8888');
   assert.deepEqual(profile.proxy,{server:'http://127.0.0.1:8888',username:'fixture-user',password:'fixture-password'});
   assert.equal(profile.endpoint.includes('fixture-password'),false);
+});
+
+test('API root addresses and browser fragment routes retain their intended paths',()=>{
+  const db=new DatabaseSync(':memory:');
+  try {
+    const apis=new ApiProfiles(new WorkspaceStore(db,randomBytes(32)));
+    const profile=apis.save({name:'Root endpoint',endpoint:'https://api.example/',model:'fixture-model',key:'fixture-key'});
+    assert.equal(profile.endpoint,'https://api.example/chat/completions');
+    assert.equal(monitorUrl('https://catalog.example/#/products/123'),'https://catalog.example/#/products/123');
+  }finally{db.close();}
 });

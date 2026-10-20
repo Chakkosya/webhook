@@ -13,7 +13,7 @@ function actionUrl(url) {
 export function monitorUrl(value) {
   let url;try{url=new URL(value);}catch{fail('MONITOR_URL','请填写完整的网页地址');}
   if(!['http:','https:'].includes(url.protocol)||url.username||url.password||actionUrl(url))fail('MONITOR_URL','请使用只读的商品或内容页面，不使用下单、付款或退出地址');
-  url.hash='';return url.href;
+  return url.href;
 }
 export class ObservationBrowser {
   constructor({dataDir,id,profile,headless=true}){Object.assign(this,{dataDir,id,profile,headless});}
