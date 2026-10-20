@@ -38,6 +38,7 @@ export async function condition(page,c) {
 export async function conditions(page,checks) {for(const c of checks)if(!await condition(page,c))return false;return true;}
 
 export async function perform(action,policy,progress){
+  progress?.touch();
   let done=false,error;const task=Promise.resolve().then(action).then(()=>{done=true;},e=>{error=e;done=true;});
   try{await until(()=>done,policy,progress);await task;if(error)throw error;}
   catch(error){await progress?.cdp?.send('Page.stopLoading').catch(()=>{});throw error;}

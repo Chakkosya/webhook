@@ -37,6 +37,7 @@ export class Engine {
       try{history=await this.adapter.history(this.session);}
       catch(error){if(error.code!=='SESSION')throw error;await this.session.ensure(true);history=await this.adapter.history(this.session);}
       knownIds=history.map(r=>r.invoiceId);
+      await this.session.page.bringToFront();
       this.kernel.begin(intent,run.id,history);reserved=true;
       for(const [index,step] of workflow.steps.entries()) {
         if(step.action==='pay'&&goal==='invoice')continue;

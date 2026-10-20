@@ -64,6 +64,7 @@ test('coupon rejection either removes the coupon or stops before submission',asy
       {id:'coupon',action:'coupon',target:{selector:'#apply'},request:fixture.site.writes[1],pre:[{kind:'visible',selector:'#promo'}],post:[{kind:'visible',selector:'#coupon-ok'}],timing:base});
   });
   f.state.couponInvalid=true;
+  await f.runtime.warm();await f.runtime.session.monitorPage.bringToFront();
   const run=await f.runtime.execute({...f.ref,mode:'trial'});assert.equal(run.status,'trial-ready',JSON.stringify(run.error));assert.equal(f.state.coupons,1);assert.equal(f.state.removed,1);
   const doc={...f.workflow,id:'stop-coupon',couponPolicy:'stop'};f.runtime.repository.create(doc);f.state.couponInvalid=true;
   const stopped=await f.runtime.execute({workflowId:doc.id,version:1,mode:'trial'});assert.equal(stopped.error.category,'COUPON');assert.equal(f.state.removed,1);assert.equal(f.state.submitted,0);
