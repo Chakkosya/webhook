@@ -1,5 +1,18 @@
 # 站点学习与运行
 
+## 创建监控（无需代码）
+
+1. 打开「API 与出口」→「AI API」，填写名称、API 地址、API Key 和模型名称，保存后点击「测试连接」。可以保存多个服务并设置默认 API。
+2. 需要代理时，切换到「网络出口」，粘贴 SS 分享链接或手填 SS 节点，也可添加 HTTP / HTTPS 代理。点击「测试出口」核对浏览器连通性与出口 IP。
+3. 打开「监控任务」→「新建监控」，粘贴网页地址，选择补货、价格、内容变化或关键词，用一句话说明要求，选择 API、出口和检查间隔。
+4. 点击「AI 分析并预览」。系统打开真实浏览器，提取页面证据，生成规则并连续验证两次。核对当前读取内容和触发条件后，点击「确认并启动监控」。
+5. 在任务卡片中暂停、立即检查、重新配置或删除。支持多个任务，每页 10 条。配置和运行状态持久化，服务重启后恢复已启用的监控。
+
+日常检查只运行已经验证的规则，不调用 AI。命中时立即再读取一次，确认后记录提醒；通知地址选填，填写时发送通用 JSON Webhook。异常页、登录页或目标元素缺失返回未知，库存只接受明确数字或完整可用的加购表单。
+
+SS Docker 客户端来自 [shadowsocks-rust](https://github.com/shadowsocks/shadowsocks-rust)，节点分享链接遵循 [SIP002](https://shadowsocks.org/doc/sip002.html)。本机运行 SS 时需安装客户端并设置 `SSLOCAL_EXECUTABLE`。API 密钥、SS 密码和通知地址在数据库中加密保存，接口不回显密钥和密码。
+
+
 ## 确定目标站点后接入
 
 默认配置不预设商城系统。使用 `examples/config.template.json` 填写从实际页面学到的证据，选择 `adapter: "learned"`。明确为 WHMCS 时，可使用 `examples/whmcs.config.template.json`。
@@ -212,6 +225,12 @@ npm run cli -- resolve --key purchase-001 --outcome created --invoice ORDER-A1 -
 | 方法与路径 | 操作 |
 | --- | --- |
 | GET /api/health | 服务存活 |
+| GET /api/connections | 已保存 API 和出口的公开信息 |
+| POST /api/apis/save、/test、/default、/delete | 添加、测试、设置默认或删除 API |
+| POST /api/proxies/save、/test、/delete | 添加、测试或删除 SS / HTTP 出口 |
+| GET /api/monitors | 监控任务和检查结果 |
+| POST /api/monitors/analyze | 根据自然语言与真实页面生成并验证监控 |
+| POST /api/monitors/start、/stop、/check、/delete | 启动、暂停、立即检查或删除任务 |
 | GET /api/status | 版本、运行、指标、修补队列和事件 |
 | GET、POST /api/config | 读取、保存本站点配置 |
 | POST /api/workflows | 导入新候选 |

@@ -9,6 +9,10 @@ import {Engine} from './engine/index.js';
 import {StockMonitor} from './monitor/index.js';
 import {VisualAnchors} from './locators/visual.js';
 import {fail} from './errors.js';
+import {WorkspaceStore} from './workspace/store.js';
+import {ApiProfiles} from './workspace/profiles.js';
+import {ProxyProfiles} from './browser/proxy.js';
+import {PageMonitors} from './monitor/pages.js';
 export class Runtime {
   constructor(dataDir=process.env.DATA_DIR||'.data/workflow'){this.dataDir=resolve(dataDir);this.events=[];}
   async open() {
@@ -16,6 +20,10 @@ export class Runtime {
     this.kernel=new SafetyKernel(join(this.dataDir,'runtime.sqlite'));this.repository=new WorkflowRepository(this.kernel.db);
     this.credentials=await new CredentialStore(this.kernel.db,this.dataDir).open();
     try{this.config=JSON.parse(await readFile(join(this.dataDir,'config.json'),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
+    this.workspace=new WorkspaceStore(this.kernel.db,this.credentials.key);
+    this.apis=new ApiProfiles(this.workspace);this.proxies=new ProxyProfiles(this.workspace);
+    this.pageMonitors=new PageMonitors({store:this.workspace,proxies:this.proxies,dataDir:this.dataDir,onEvent:value=>this.event(value)});
+    await this.pageMonitors.restore();
     return this;
   }
   event(value){this.events.unshift({at:new Date().toISOString(),...value});this.events.length=Math.min(this.events.length,100);}
@@ -50,7 +58,7 @@ export class Runtime {
     if(this.session)return this.session;
     const config=this.config;
     const session=new BrowserSession({site:config.site,kernel:this.kernel,dataDir:this.dataDir,headless:manual?false:config.headless!==false,
-      getCredentials:()=>{const saved=this.credentials.get(config.site.origin,config.site.account);return saved?{...saved,needsLogin:this.credentials.needsLogin(config.site.origin,config.site.account)}:null;},
+      proxyProfile:this.proxies.get(config.proxyId||config.site.proxyId),getCredentials:()=>{const saved=this.credentials.get(config.site.origin,config.site.account);return saved?{...saved,needsLogin:this.credentials.needsLogin(config.site.origin,config.site.account)}:null;},
       onAuthenticated:username=>this.credentials.loggedIn(config.site.origin,config.site.account,username),onEvent:event=>this.event(event),executablePath:await browserExecutable(process.env.BROWSER_EXECUTABLE)});
     try{await session.open({manual});}catch(error){this.lastBrowserHealth=session.lastHealth||{at:new Date().toISOString(),status:'failed',message:error.message,category:error.code};await session.close();throw error;}
     this.session=session;
@@ -72,6 +80,6 @@ export class Runtime {
     this.monitor.start(intervalMs);
   }
   stop(){this.monitor?.stop();this.monitor=null;}
-  status(){return {configured:!!this.config,credentials:this.credentialStatus(),account:this.config?{origin:this.config.site.origin,name:this.config.site.account}:null,browser:this.session?.lastHealth||this.lastBrowserHealth||null,monitoring:!!this.monitor&&!this.monitor.stopped,workflows:this.repository.list(),runs:this.repository.runs(),metrics:this.repository.metrics(),repairs:this.repository.repairs(),events:this.events};}
-  async close(){this.stop();if(this.starting)await this.starting.catch(()=>{});await this.session?.close();this.kernel?.close();}
+  status(){return {monitors:this.pageMonitors.list(),profiles:{apis:this.apis.list(),proxies:this.proxies.list(),sessionProxyId:this.config?.proxyId||this.config?.site.proxyId||''},configured:!!this.config,credentials:this.credentialStatus(),account:this.config?{origin:this.config.site.origin,name:this.config.site.account}:null,browser:this.session?.lastHealth||this.lastBrowserHealth||null,monitoring:!!this.monitor&&!this.monitor.stopped,workflows:this.repository.list(),runs:this.repository.runs(),metrics:this.repository.metrics(),repairs:this.repository.repairs(),events:this.events};}
+  async close(){this.stop();await this.pageMonitors?.close();if(this.starting)await this.starting.catch(()=>{});await this.session?.close();this.kernel?.close();}
 }

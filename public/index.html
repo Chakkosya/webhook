@@ -14,6 +14,8 @@
         <a class="brand" href="#/overview" aria-label="确定性工作流首页"><span class="brand-mark" aria-hidden="true">W</span><span>确定性工作流</span></a>
         <nav aria-label="工作区">
           <a href="#/overview">运行概况</a>
+          <a href="#/monitors">监控任务</a>
+          <a href="#/connections">API 与出口</a>
           <a href="#/account-login">登录账户</a>
           <a href="#/workflows">工作流仓库</a>
           <a href="#/runs">执行记录</a>
@@ -28,11 +30,11 @@
         <header class="hero">
           <div>
             <p class="eyebrow">WORKFLOW OPERATIONS</p>
-            <h1>让成功的流程，<br class="mobile-break"><span class="headline-finish">重复成功。</span></h1>
-            <p class="hero-description">学习、验证、发布，再交给确定性引擎执行。</p>
+            <h1>把你关心的，<br class="mobile-break"><span class="headline-finish">交给监控。</span></h1>
+            <p class="hero-description">添加网址，说说你想关注什么。AI 整理规则，浏览器持续检查。</p>
             <div class="hero-actions">
-              <a class="button" href="#/workflows">管理工作流<span aria-hidden="true">→</span></a>
-              <a class="button secondary" href="#/runs">查看执行记录</a>
+              <a class="button" href="#/monitors">新建智能监控<span aria-hidden="true">→</span></a>
+              <a class="button secondary" href="#/connections">添加 API 与出口</a>
             </div>
             <ol class="workflow-stages" aria-label="工作流生命周期">
               <li><span>01 / LEARN</span><strong>学习</strong><small>记录真实步骤</small></li>
@@ -89,6 +91,77 @@
         </div>
       </section>
 
+      <section data-page hidden id="monitors" class="monitor-workspace">
+        <div class="section-head">
+          <div><p class="eyebrow">YOUR WATCHLIST</p><h2>监控任务</h2><p class="muted">告诉我们你想关注什么，剩下的交给浏览器。</p></div>
+          <button id="new-monitor">＋ 新建监控</button>
+        </div>
+        <div id="monitor-onboarding" class="onboarding panel">
+          <div><span class="step-number">01</span><h3>连接你的 API</h3><p>添加 API 地址、密钥和模型，支持保存多个服务。</p><a href="#/connections">去添加 API →</a></div>
+          <div><span class="step-number">02</span><h3>说出监控要求</h3><p>粘贴网址，描述补货、降价、关键词或内容变化。</p></div>
+          <div><span class="step-number">03</span><h3>预览后启动</h3><p>核对实际读取到的内容和触发条件，再开始持续检查。</p></div>
+        </div>
+        <section id="monitor-builder" class="panel builder-panel" hidden aria-labelledby="builder-title">
+          <div class="section-head"><div><p class="eyebrow">A LITTLE HELP FROM AI</p><h2 id="builder-title">创建智能监控</h2></div><button id="close-builder" class="subtle" type="button">收起</button></div>
+          <form id="monitor-form">
+            <div class="form-grid">
+              <label class="span-two">监控网页<input id="monitor-url" type="url" required placeholder="粘贴你想监控的商品或内容页面网址"></label>
+              <label>监控类型<select id="monitor-kind"><option value="stock">补货 / 库存</option><option value="price">价格阈值</option><option value="change">内容变化</option><option value="text">关键词出现</option></select></label>
+              <label>名称（选填）<input id="monitor-name" placeholder="例如：东京服务器补货"></label>
+              <label class="span-two">你想关注什么？<textarea id="monitor-requirement" required placeholder="例如：关注这款服务器，有可购买库存时提醒我。" rows="3"></textarea></label>
+              <div class="prompt-examples span-two" aria-label="监控示例"><button type="button" data-prompt="stock">服务器补货</button><button type="button" data-prompt="price">价格下降</button><button type="button" data-prompt="change">页面更新</button><button type="button" data-prompt="text">关键词提醒</button></div>
+              <label>使用的 AI API<select id="monitor-api"><option value="">默认 API</option></select><small>仅创建和修改时调用 AI。</small></label>
+              <label>浏览器出口<select id="monitor-proxy"><option value="">直连</option></select><small>SS、HTTP 出口在「API 与出口」中添加。</small></label>
+              <label>检查间隔（秒）<input id="monitor-interval" type="number" min="10" max="86400" value="30" required></label>
+              <label>通知 Webhook（选填）<input id="monitor-webhook" type="url" placeholder="https://…"><small>发送通用 JSON；留空时在任务内记录提醒。</small></label>
+            </div>
+            <div class="actions builder-actions"><button id="analyze-monitor" type="submit">AI 分析并预览 <span aria-hidden="true">↗</span></button><a href="#/connections">管理 API 与出口</a></div>
+          </form>
+          <p id="monitor-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+          <div id="monitor-preview" class="monitor-preview" hidden>
+            <div class="section-head"><div><span class="badge">两次页面验证通过</span><h3 id="preview-name"></h3></div><button id="confirm-monitor">确认并启动监控</button></div>
+            <p id="preview-description"></p><dl class="preview-facts"><div><dt>触发条件</dt><dd id="preview-rule"></dd></div><div><dt>当前读取</dt><dd id="preview-value"></dd></div><div><dt>当前状态</dt><dd id="preview-state"></dd></div></dl>
+            <p class="muted">启动后使用已验证规则检查，命中时即时复查一次。此监控只读取页面并提醒。</p>
+          </div>
+        </section>
+        <div id="monitor-list" class="monitor-grid"></div>
+        <div id="monitor-list-pagination" class="pagination" hidden><p id="monitor-list-page"></p><div class="actions"><button id="monitor-list-prev" class="subtle">上一页</button><button id="monitor-list-next" class="subtle">下一页</button></div></div>
+      </section>
+
+      <section data-page hidden id="connections" class="connections-workspace">
+        <div class="section-head"><div><p class="eyebrow">CONNECTIONS</p><h2>API 与出口</h2><p class="muted">一次添加，在创建监控时直接选择。</p></div></div>
+        <div class="segmented" role="tablist" aria-label="连接设置"><button id="api-tab" role="tab" aria-selected="true" aria-controls="api-settings">AI API</button><button id="proxy-tab" role="tab" aria-selected="false" aria-controls="proxy-settings">网络出口</button></div>
+        <div id="api-settings" class="settings-layout" role="tabpanel" aria-labelledby="api-tab">
+          <section class="panel settings-form"><h3 id="api-form-title">添加 AI API</h3><p class="muted">支持兼容 Chat Completions 协议的服务。填写服务商提供的信息即可。</p>
+            <form id="api-form"><div class="field-stack">
+              <label>名称<input id="api-name" required placeholder="例如：我的常用 API"></label>
+              <label>API 地址<input id="api-endpoint" type="url" required placeholder="https://你的服务商/v1"><small>可填写基础地址或完整的 /chat/completions 地址。</small></label>
+              <label>API Key<input id="api-key" type="password" autocomplete="off" required placeholder="粘贴服务商提供的密钥"></label>
+              <label>模型名称<input id="api-model" required placeholder="服务商提供的模型 ID"></label>
+            </div><div class="actions"><button id="save-api" type="submit">保存 API</button><button id="cancel-api" class="subtle" type="button" hidden>取消编辑</button></div></form>
+            <p id="api-feedback" class="form-feedback" role="status"></p><p class="muted">密钥加密保存在本机，保存后不回显。</p>
+          </section>
+          <section class="panel"><div class="section-head"><h3>已保存的 API</h3><span id="api-count" class="badge">0 个</span></div><div id="api-list" class="connection-list"></div><div id="api-empty" class="preview-empty"><p>添加第一个 API</p><small>保存后可测试连接，再去创建监控。</small></div></section>
+        </div>
+        <div id="proxy-settings" class="settings-layout" role="tabpanel" aria-labelledby="proxy-tab" hidden>
+          <section class="panel settings-form"><h3 id="proxy-form-title">添加网络出口</h3><p class="muted">支持 SS 分享链接、手动填写 SS 节点，以及 HTTP / HTTPS 代理。</p>
+            <form id="proxy-form"><div class="field-stack">
+              <label>名称<input id="proxy-name" required placeholder="例如：东京出口"></label>
+              <label>添加方式<select id="proxy-mode"><option value="link">粘贴分享链接或代理地址</option><option value="manual">手动填写 SS 节点</option></select></label>
+              <label id="proxy-link-field">节点或代理地址<input id="proxy-url" type="password" autocomplete="off" placeholder="ss://… 或 http://…"></label>
+              <div id="proxy-manual" class="form-grid" hidden>
+                <label class="span-two">SS 服务器<input id="proxy-server" placeholder="域名或 IP"></label>
+                <label>端口<input id="proxy-port" type="number" min="1" max="65535" value="8388"></label>
+                <label>加密方式<select id="proxy-method"><option>aes-256-gcm</option><option>aes-128-gcm</option><option>chacha20-ietf-poly1305</option><option>2022-blake3-aes-128-gcm</option><option>2022-blake3-aes-256-gcm</option><option>2022-blake3-chacha20-poly1305</option></select></label>
+                <label class="span-two">密码 / 密钥<input id="proxy-password" type="password" autocomplete="off"></label>
+              </div>
+            </div><div class="actions"><button id="save-proxy" type="submit">保存出口</button><button id="cancel-proxy" class="subtle" type="button" hidden>取消编辑</button></div></form>
+            <p id="proxy-feedback" class="form-feedback" role="status"></p><p class="muted">节点密码加密保存。SS 客户端已包含在 Docker 镜像中。</p>
+          </section>
+          <section class="panel"><div class="section-head"><h3>已保存的出口</h3><span id="proxy-count" class="badge">0 个</span></div><label class="test-url-label">连接测试网址<input id="proxy-test-url" type="url" placeholder="留空时检测出口 IP"></label><div id="proxy-list" class="connection-list"></div><div id="proxy-empty" class="preview-empty"><p>也可以先使用直连</p><small>添加出口后，可为每个监控单独选择。</small></div></section>
+        </div>
+      </section>
+
       <section data-page hidden id="account-login" class="panel">
         <div class="account-intro">
           <div class="section-head">
@@ -109,6 +182,7 @@
           </div>
           <button id="delete-login" class="subtle">删除已保存账号</button>
           <p id="login-health" class="muted"></p>
+          <div class="session-route"><label for="session-proxy">此站点的浏览器出口<select id="session-proxy"><option value="">直连</option></select></label><button id="save-session-proxy" class="subtle">保存会话出口</button></div>
         </div>
       </section>
 

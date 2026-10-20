@@ -1,7 +1,12 @@
+FROM ghcr.io/shadowsocks/sslocal-rust:v1.25.0 AS shadowsocks
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 DATA_DIR=/app/.data/workflow \
     PLAYWRIGHT_BROWSERS_PATH=/opt/playwright BROWSER_EXECUTABLE=/usr/local/bin/chromium \
+    SSLOCAL_EXECUTABLE=/usr/local/bin/sslocal \
     XDG_CACHE_HOME=/tmp/workflow-cache XDG_CONFIG_HOME=/tmp/workflow-config
+COPY --from=shadowsocks /usr/bin/sslocal /usr/local/bin/sslocal
+COPY third_party/shadowsocks-LICENSE /usr/share/doc/shadowsocks/LICENSE
+RUN /usr/local/bin/sslocal --version
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts \

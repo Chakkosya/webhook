@@ -4,6 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
+import {WorkspaceStore} from '../src/workspace/store.js';
 import {CredentialStore} from '../src/browser/credentials.js';
 async function setup(t) {
   const dir=await mkdtemp(join(tmpdir(),'workflow-credentials-')),db=new DatabaseSync(join(dir,'store.sqlite'));
@@ -102,4 +103,12 @@ test('an invalid configured key fails without falling back to the key file',asyn
   const {dir,db}=await setup(t),file=join(dir,'credentials.key'),key=await readFile(file);
   await assert.rejects(()=>new CredentialStore(db,dir,'invalid-key').open(),{code:'CREDENTIALS_KEY'});
   assert.deepEqual(await readFile(file),key);
+});
+
+test('encrypted workspace profiles also prevent generation of a replacement key',async t=>{
+  const {dir,db,store}=await setup(t);
+  new WorkspaceStore(db,store.key).put('api',{name:'Fixture',key:'fixture-private-api-key'});
+  await rm(join(dir,'credentials.key'));
+  await assert.rejects(()=>new CredentialStore(db,dir,'').open(),{code:'CREDENTIALS_KEY'});
+  await assert.rejects(()=>readFile(join(dir,'credentials.key')),{code:'ENOENT'});
 });

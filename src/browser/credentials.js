@@ -16,7 +16,8 @@ export class CredentialStore {
     try{this.key=await readFile(this.keyFile);}
     catch(error) {
       if(error.code!=='ENOENT')throw error;
-      if(this.db.prepare('SELECT COUNT(*) AS n FROM credentials').get().n)fail('CREDENTIALS_KEY','已保存账号缺少密钥，请恢复 CREDENTIALS_KEY 或 credentials.key');
+      const workspace=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_records'").get();
+      if(this.db.prepare('SELECT COUNT(*) AS n FROM credentials').get().n||(workspace&&this.db.prepare('SELECT COUNT(*) AS n FROM workspace_records').get().n))fail('CREDENTIALS_KEY','已保存凭据缺少密钥，请恢复 CREDENTIALS_KEY 或 credentials.key');
       const key=randomBytes(32);
       try{await writeFile(this.keyFile,key,{flag:'wx',mode:0o600});this.key=key;}
       catch(error){if(error.code!=='EEXIST')throw error;this.key=await readFile(this.keyFile);}

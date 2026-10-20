@@ -1,4 +1,5 @@
 import {chromium} from 'playwright-core';
+import {openProxy} from './proxy.js';
 import {mkdir,access} from 'node:fs/promises';
 import {join} from 'node:path';
 import {RequestGate,formRequest} from './gate.js';
@@ -14,14 +15,15 @@ function hideCredentials(error,values) {
   return result;
 }
 export class BrowserSession {
-  constructor({site,kernel,dataDir,executablePath,headless=true,getCredentials=()=>null,onAuthenticated=()=>{},onEvent=()=>{}}) {
-    Object.assign(this,{site,kernel,dataDir,executablePath,headless,getCredentials,onAuthenticated,onEvent});
+  constructor({site,kernel,dataDir,executablePath,headless=true,proxyProfile,getCredentials=()=>null,onAuthenticated=()=>{},onEvent=()=>{}}) {
+    Object.assign(this,{site,kernel,dataDir,executablePath,headless,proxyProfile,getCredentials,onAuthenticated,onEvent});
     this.busy=false;this.timer=null;this.lastHealth=null;
   }
   async open({manual=false}={}) {
     const profile=join(this.dataDir,'browser',this.site.account);await mkdir(profile,{recursive:true});
     this.gate=new RequestGate(this.site,this.kernel);
-    this.context=await chromium.launchPersistentContext(profile,{headless:this.headless,executablePath:this.executablePath,serviceWorkers:'block',viewport:{width:1280,height:900},proxy:this.site.proxy?{server:this.site.proxy.server,username:process.env[this.site.proxy.usernameEnv],password:process.env[this.site.proxy.passwordEnv]}:undefined});
+    this.proxyRoute=await openProxy(this.proxyProfile);
+    this.context=await chromium.launchPersistentContext(profile,{headless:this.headless,executablePath:this.executablePath,args:this.proxyRoute.proxy||this.site.proxy?['--proxy-bypass-list=<-loopback>']:[],serviceWorkers:'block',viewport:{width:1280,height:900},proxy:this.proxyRoute.proxy||(this.site.proxy?{server:this.site.proxy.server,username:process.env[this.site.proxy.usernameEnv],password:process.env[this.site.proxy.passwordEnv]}:undefined)});
     await this.context.route('**/*',route=>this.gate.route(route));
     this.page=this.context.pages()[0]||await this.context.newPage();this.monitorPage=await this.context.newPage();
     this.progress=new Progress(this.page);this.monitorProgress=new Progress(this.monitorPage);
@@ -113,7 +115,7 @@ export class BrowserSession {
       });
     },intervalMs);this.timer.unref();
   }
-  async close(){clearInterval(this.timer);this.progress?.close();this.monitorProgress?.close();await this.context?.close();}
+  async close(){clearInterval(this.timer);this.progress?.close();this.monitorProgress?.close();try{await this.context?.close();}finally{await this.proxyRoute?.close();}}
 }
 export async function browserExecutable(configured) {
   if(configured)return configured;

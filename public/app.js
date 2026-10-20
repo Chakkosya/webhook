@@ -1,3 +1,4 @@
+import {setupWorkspace,refreshWorkspace} from './workspace.js';
 const $=selector=>document.querySelector(selector);
 const labels={candidate:'待验证',verified:'已验证',stale:'已过期',running:'执行中','trial-ready':'试运行通过',ordered:'已创建订单',paid:'已支付',failed:'失败'};
 const time=value=>new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'short',timeStyle:'medium',hour12:false}).format(new Date(value));
@@ -94,6 +95,8 @@ async function refresh() {
   lists.workflow.items=status.workflows;renderWorkflows();
   lists.runs.items=status.runs;renderRuns();renderOverview();
   $('#events').textContent=JSON.stringify(status.events,null,2);
+  refreshWorkspace(status);
+  const activeMonitors=(status.monitors||[]).filter(item=>item.running).length;if(activeMonitors)$('#monitor-state').textContent=activeMonitors+' 个监控中';
 }
 async function loadCredentials(){const value=await api('credentials');$('#login-username').value=value.username||'';$('#login-password').value='';}
 $('#save-login').onclick=()=>action($('#save-login'),async()=>{
@@ -103,9 +106,10 @@ $('#save-login').onclick=()=>action($('#save-login'),async()=>{
 $('#check-login').onclick=()=>action($('#check-login'),async()=>{await api('session/check',{});notice('登录状态已确认');});
 $('#delete-login').onclick=()=>action($('#delete-login'),async()=>{await api('credentials/delete',{});await loadCredentials();notice('已删除保存的账号密码');});
 $('#warm').onclick=()=>action($('#warm'),async()=>{await api('warm',{});notice('会话已登录并预热');});
-$('#stop').onclick=()=>action($('#stop'),async()=>{await api('monitor/stop',{});notice('监控已停止');});
+$('#stop').onclick=()=>action($('#stop'),async()=>{await api('monitor/stop',{});for(const monitor of await api('monitors'))if(monitor.running)await api('monitors/stop',{id:monitor.id});notice('监控已停止');});
 $('#save').onclick=()=>action($('#save'),async()=>{await api('config',JSON.parse($('#config-json').value));await loadCredentials();notice('配置已保存');});
 $('#import').onchange=async event=>{try{const file=event.target.files[0];if(!file)return;await api('workflows',JSON.parse(await file.text()));notice('候选版本已导入');await refresh();}catch(error){notice(error.message);}finally{event.target.value='';}};
 $('#close-detail').onclick=()=>$('#run-detail').close();
+setupWorkspace({$,api,button,action,notice,node,refresh,time});
 try{const config=await api('config');if(config)$('#config-json').value=JSON.stringify(config,null,2);await loadCredentials();await refresh();}catch(error){notice(error.message);$('#connection').textContent='连接失败';}
 setInterval(()=>refresh().catch(()=>{$('#connection').textContent='连接中断';}),5000);
