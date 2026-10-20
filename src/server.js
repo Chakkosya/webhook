@@ -9,6 +9,7 @@ import {ObservationBrowser,monitorUrl} from './browser/observation.js';
 import {randomUUID} from 'node:crypto';
 import {join} from 'node:path';
 import {WebsiteAuth} from './auth/index.js';
+import {assertSameOrigin} from './auth/origin.js';
 import {errorRecord,fail} from './errors.js';
 export async function serve({runtime,sendMail,port=Number(process.env.PORT||3000),host=process.env.HOST||'127.0.0.1'}={}) {
   runtime??=await new Runtime().open();
@@ -25,7 +26,7 @@ export async function serve({runtime,sendMail,port=Number(process.env.PORT||3000
     const url=new URL(req.url,'http://localhost');
     const send=(status,value,type='application/json; charset=utf-8')=>{res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store'});res.end(type.startsWith('application/json')?JSON.stringify(value):value);};
     try {
-      if(req.method==='POST'&&req.headers.origin&&req.headers.origin!==new URL(req.url,'http://'+req.headers.host).origin)fail('ORIGIN','仅接受工作台自身发起的操作');
+      assertSameOrigin(req);
       if(req.method==='GET'&&url.pathname==='/api/auth/status')return send(200,{user,setup:auth.users().length===0,mailConfigured:auth.mailStatus().configured});
       if(req.method==='GET'&&['/signin','/signup'].includes(url.pathname)){
         if(user)return redirect('/');
@@ -63,7 +64,6 @@ export async function serve({runtime,sendMail,port=Number(process.env.PORT||3000
       if(req.method==='GET'&&url.pathname==='/api/connections')return send(200,{apis:runtime.apis.list(),proxies:runtime.proxies.list()});
       if(req.method==='GET'&&url.pathname==='/api/monitors')return send(200,runtime.pageMonitors.list());
       if(req.method!=='POST')return send(404,{error:'接口不存在'});
-      if(req.headers.origin&&req.headers.origin!==new URL(req.url,'http://'+req.headers.host).origin)fail('ORIGIN','仅接受工作台自身发起的操作');
       let text='';for await(const chunk of req){text+=chunk;if(text.length>2_000_000)fail('INPUT','请求内容过大');}
       const body=JSON.parse(text||'{}');
       if(url.pathname==='/api/mail/save'){

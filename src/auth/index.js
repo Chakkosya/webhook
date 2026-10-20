@@ -2,6 +2,7 @@ import {randomBytes,randomInt,randomUUID,scrypt,timingSafeEqual} from 'node:cryp
 import {promisify} from 'node:util';
 import nodemailer from 'nodemailer';
 import {fail,Fault} from '../errors.js';
+import {secureRequest} from './origin.js';
 const derive=promisify(scrypt),lifetime=30*86400000;
 const emailAddress=value=>{const email=String(value||'').trim().toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)fail('AUTH_INPUT','请填写有效的邮箱地址');return email;};
 export class WebsiteAuth {
@@ -12,7 +13,7 @@ export class WebsiteAuth {
  users(){return this.db.prepare('SELECT id,email,owner,verified FROM app_users').all().map(user=>({...user,owner:!!user.owner,verified:!!user.verified}));}
  user(req){const token=this.token(req);const row=token&&this.db.prepare('SELECT u.id,u.email,u.owner,u.verified FROM app_sessions s JOIN app_users u ON u.id=s.user_id WHERE s.token=? AND s.expires>?').get(token,this.now());return row?{...row,owner:!!row.owner,verified:!!row.verified}:null;}
  token(req){return /(?:^|;\s*)workflow_session=([A-Za-z0-9_-]+)/.exec(req.headers.cookie||'')?.[1];}
- cookie(req,res,token,age=30*86400){const secure=req.socket.encrypted||req.headers['x-forwarded-proto']==='https';res.setHeader('Set-Cookie','workflow_session='+token+'; Path=/; HttpOnly; SameSite=Lax; Max-Age='+age+(secure?'; Secure':''));}
+ cookie(req,res,token,age=30*86400){const secure=secureRequest(req);res.setHeader('Set-Cookie','workflow_session='+token+'; Path=/; HttpOnly; SameSite=Lax; Max-Age='+age+(secure?'; Secure':''));}
  session(user,req,res){const token=randomBytes(32).toString('base64url');this.db.prepare('DELETE FROM app_sessions WHERE expires<=?').run(this.now());this.db.prepare('INSERT INTO app_sessions VALUES(?,?,?)').run(token,user.id,this.now()+lifetime);this.cookie(req,res,token);return user;}
  logout(req,res){this.db.prepare('DELETE FROM app_sessions WHERE token=?').run(this.token(req)||'');this.cookie(req,res,'',0);}
  mailConfig(){

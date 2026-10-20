@@ -105,6 +105,14 @@ docker compose pull
 docker compose up -d
 ```
 
+通过 1Panel / OpenResty 或 Nginx 反向代理时，可直接使用 HTTPS 域名访问。浏览器的同源请求在代理改写 Host 后仍可正常注册、登录和保存配置；不提供浏览器来源元数据的客户端，使用代理转发的外部域名与协议核对来源。代理应覆盖这些请求头，并让应用端口仅对本机或代理网络开放：
+
+```nginx
+proxy_set_header Host $http_host;
+proxy_set_header X-Forwarded-Host $http_host;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
 从源码构建：
 
 ```bash
